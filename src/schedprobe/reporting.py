@@ -27,6 +27,7 @@ from .util import clamp
 __all__ = [
     "render_benchmark_table",
     "render_diff",
+    "render_export",
     "render_replay",
     "render_run_table",
     "render_summary",
@@ -254,6 +255,32 @@ def render_benchmark_table(payload: Mapping[str, Any]) -> str:
             f"baseline(planner=fixed): {json.dumps(payload.get('delta_vs_fixed', {}), sort_keys=True)}",
         ]
     )
+
+
+def render_export(payload: Mapping[str, Any]) -> str:
+    """Render the redacted-export summary.
+
+    Deliberately loud about what the derivative is not: the whole point of the command is
+    that a reader can tell it apart from the original log.
+    """
+    lines = [
+        f"OK   wrote a redacted derivative: {sanitize(str(payload.get('redacted_log', '')), 120)}",
+        f"      source        : {sanitize(str(payload.get('source', '')), 120)}",
+        f"      manifest      : {sanitize(str(payload.get('manifest', '')), 120)}",
+        f"      records       : {payload.get('records', 0)}",
+        f"      values redacted: {payload.get('redacted_values', 0)}",
+        f"      text fields dropped: {payload.get('dropped_text_fields', 0)}",
+        f"      salt commitment: {sanitize(str(payload.get('salt_commitment', '')), 80)}",
+        "",
+        "      This file is a DERIVATIVE, not the original evidence log:",
+        "        * it cannot be replayed - the replay verifier will report divergence by design",
+        "        * its hash chain attests to the redacted content only",
+        "        * timestamps and port numbers are unchanged",
+    ]
+    salt = payload.get("salt_commitment")
+    if salt:
+        lines.append("        * the pseudonym salt is not in this file (see --salt to reproduce)")
+    return "\n".join(lines)
 
 
 def render_diff(payload: Mapping[str, Any]) -> str:

@@ -12,6 +12,40 @@
 
 ## [0.1.0] — 未发布（Unreleased）
 
+### 新增
+
+- **`schedprobe export`：证据日志的可分享派生副本。** 证据日志是为逐字节回放保留明文地址的审计记录，
+  因此不能直接外发。`export` 写出一份**声明的派生件**：主机与网段伪名化、自由文本默认丢弃、
+  头部写明 `derivative: true` / `replayable: false` / `derivative_of: <原日志摘要>`，
+  并列出局限（时间戳与端口不变、链只对脱敏后的内容有效）。
+  **伪名使用不写入文件的随机盐**，只发布 `sha256(盐)` 承诺——因此读者**无法**像 `--redact` 那样
+  用日志里的 `run_id` 对 /24 穷举 256 次反推地址。该性质由穷举测试固定，不是注释里的声明。
+  源日志验链失败时拒绝导出，避免把损坏记录洗成干净副本。
+
+### 修复
+
+- **证据日志把命令行原文写进了 `manifest.argv`。** `_safe_argv()` 的文档说"丢弃看起来像机密的参数"，
+  但它只认 `--token` / `--password` 一类，**工具自己定义的 `--label` / `--notes` /
+  `--authorization` 的值是明文入库的**——而这三个正是操作者用来写行动代号与范围说明的字段。
+  现在 flag 名保留、值丢弃，`--flag value` 与 `--flag=value` 两种写法都覆盖。
+  该泄漏是做导出功能、对派生件 grep 植入式 canary 时发现的。
+- **`--json` 在子命令前后的行为不一致。** `_add_verify` 重复声明了 `--json`，其子解析器默认值
+  `False` **会覆盖**全局解析器已存的值：`schedprobe --json verify <run>` 静默退回文本模式，
+  而 `schedprobe verify <run> --json` 正常；`schedprobe version --json` 直接报用法错误。
+  改为用 `default=argparse.SUPPRESS` 的统一助手声明，现在任意位置都等价（有回归测试）。
+- **多个子命令在 `--json` 下仍打印人类文本**，因为调用点传了 `force=True`——而 `Emitter` 的文档
+  明确写着"`json_mode` 完全抑制人类文本，保证 stdout 可机器解析"。23 个调用点已修正；
+  `config show` / `version` / `explain --reasons` 三处本就是 JSON 输出路径，改用正确的
+  `emitter.data()` 而不是靠 `force` 开关绕。
+
+### 新增测试
+
+- `tests/test_export.py`（26 项）：脱敏规则逐条验证、派生件声明完整性、**暴力破解抗性**、
+  源日志损坏时拒绝导出、同盐可复现。
+- `tests/test_cli_json_mode.py`（11 项）：**契约测试**——`--json` 必须在 stdout 上产生恰好一份
+  可解析的 JSON；覆盖全部子命令，并固定"标旗在子命令前后等价"。
+
+
 ### 研究
 
 - **推翻了一条已发布的负面结论：`wide-sweep` 上"自适应更差"是样本量造成的假象。**

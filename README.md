@@ -145,6 +145,7 @@ Windows 下 `--no-artifacts` 用 `TEMP` 选临时目录（`cli/main.py`）；
 | `demo` | 端到端演示（仿真后端，无网络访问） |
 | `bench` | 在一个确定性场景上对比规划器 |
 | `verify` | 校验哈希链，并（可选）与 manifest 的文件摘要比对 |
+| `export <run>` | 写出可分享的**脱敏派生件**（默认随机盐，读者无法穷举反推；不可回放，文件自己声明这一点） | `schedprobe export runs/<run> -o share.jsonl` |
 | `replay` | 离线重放并逐条比对调度决策 |
 | `explain` | 展示一次运行的决策时间线 |
 | `diff` | 两次运行对比，带反抖动分类 |
@@ -397,15 +398,16 @@ OK   replay: demo-blackhole-segment-seed1337 (planner=adaptive)
    另外：**从日志本身无法检测「末尾被截断」**——截断只剩前缀时链依然自洽（
    `tests/test_evidence.py::TestChainVerification.test_truncation_is_not_detectable_from_the_log_alone`
    把这条限制固定成了用例）。
-4. **`--redact` 是伪名化，不是加密，而且不覆盖证据日志**。实测：`--redact` 只影响渲染层
-   （控制台结果表、`results.json/jsonl/csv` 里的 `host` 字段，形如 `h:<12 位 hex>`，
-   本次实测一次运行为 `h:aad3e2c92303`，算法是 HMAC(run_id 作盐)）；
-   `evidence.jsonl` 与 `manifest.json` 里仍是**明文主机**（`run-header.targets`、
-   `probe.observation.host`、`reservations` 键、`segments[].hosts`）。需要对外分享证据日志时，
-   必须另行脱敏。`cli/console.py` 的日志层 `redact()` 也未由 CLI 接线（`configure_logging(hide_ips=...)`
-   默认 `False`）。伪名在同一 run 内一致、跨 run 不可关联。
-   （用例 `tests/test_reporting_cli.py::TestCliContract::test_redacted_scan_hides_the_host_in_artifacts`
-   名字虽含 "in artifacts"，实际只断言了 `results.json`。）
+4. **`--redact` 是伪名化，不是加密，而且不覆盖证据日志——但另有工具补这个缺口。**
+   `--redact` 只影响渲染层（控制台表格、`results.json/jsonl/csv` 的 `host` 字段）与 `manifest.json`；
+   `evidence.jsonl` 保留明文主机，因为回放要从地址重新推导 /24 网段。**这一例外现在是机器可读地声明的**
+   （run-header 的 `redaction` 块，含 `reason` 与 `warning`）。
+   要对外分享，用 **`schedprobe export`**：它写出声明的派生件（`derivative: true`、
+   `replayable: false`、`derivative_of: <原摘要>`），**用一个不写入文件的随机盐做伪名**——
+   因此读者无法像 `--redact` 那样用日志里的 `run_id` 对 /24 穷举 256 次反推地址。
+   该性质由 `tests/test_export.py` 的穷举测试固定。**但派生件仍不是原件**：时间戳与端口不变，
+   且它的哈希链只对脱敏后的内容有效。详见 `SECURITY.md` §6–7。
+
 5. **`wide-sweep` 上自适应更差，但这个数字撑不起关于策略的结论。** 该场景 adaptive recall
    33.3%、`fixed` 66.7%。看起来是剪枝的锅，但**实验已证伪**：关掉剪枝 / 延迟剪枝 / 提高最小
    样本量，召回率一个字节都没变（剪枝在该场景几乎不触发）；覆盖缺口对每个策略都是 ~2900/3072，

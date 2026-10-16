@@ -1027,10 +1027,29 @@ def _internal_verify(path: Path) -> tuple[bool, str]:
     return status.ok, status.reason
 
 
-def _safe_argv() -> list[str]:
-    """Record argv with anything that looks like a secret argument dropped.
+# Flags whose value is free text the operator typed. They belong in the same category as
+# a password for the purpose of writing an audit log: the tool cannot know what was put
+# there, and the log is meant to be shareable. Names are kept so the invocation is still
+# auditable; only the values are dropped.
+_FREETEXT_FLAGS = frozenset({"--label", "--notes", "--authorization"})
+_SECRET_FLAGS = frozenset({"--token", "--password", "--api-key", "--secret"})
+_SECRET_MARKERS = ("password=", "token=", "api_key=", "apikey=", "secret=")
 
-    The CLI never takes secrets, but a user could always paste one by accident.
+
+def _safe_argv() -> list[str]:
+    """Record argv with the values of sensitive-looking flags replaced.
+
+    Two categories are dropped, and they are dropped for different reasons:
+
+    * credentials (``--token`` and friends) - the CLI takes none, but a user can always
+      paste one by accident, and an audit log is the wrong place for it;
+    * free text this tool defines itself (``--label``, ``--notes``, ``--authorization``) -
+      these are the flags an operator uses for engagement references and scope notes, so
+      they routinely hold the most sensitive text in the invocation. They used to be
+      recorded verbatim; the leak was found by exporting a log and grepping the derivative
+      for a canary that should no longer have been there.
+
+    Flag names survive, so a reader can still see how the run was invoked.
     """
     argv = list(sys.argv[1:])
     filtered: list[str] = []
@@ -1041,11 +1060,16 @@ def _safe_argv() -> list[str]:
             skip_next = False
             continue
         lowered = item.lower()
-        if lowered in ("--token", "--password", "--api-key", "--secret"):
-            filtered.append(item)
-            skip_next = True
+        name, sep, _value = lowered.partition("=")
+        if name in _FREETEXT_FLAGS or name in _SECRET_FLAGS:
+            if sep:
+                # ``--notes=secret`` form: the name is safe, the value is not.
+                filtered.append(f"{item.split('=', 1)[0]}=<redacted>")
+            else:
+                filtered.append(item)
+                skip_next = True
             continue
-        if any(marker in lowered for marker in ("password=", "token=", "api_key=", "apikey=")):
+        if any(marker in lowered for marker in _SECRET_MARKERS):
             filtered.append("<redacted>")
             continue
         filtered.append(item)

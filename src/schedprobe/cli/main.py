@@ -59,6 +59,7 @@ from ..replay import replay_chain
 from ..reporting import (
     render_benchmark_table,
     render_diff,
+    render_export,
     render_replay,
     render_run_table,
     render_summary,
@@ -125,6 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_replay(subparsers)
     _add_explain(subparsers)
     _add_diff(subparsers)
+    _add_export(subparsers)
     _add_hostinfo(subparsers)
     _add_config(subparsers)
     _add_version(subparsers)
@@ -206,6 +208,7 @@ def _add_scan(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="read-only banner fetch for open ports (real backend, opt-in)",
     )
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_scan)
 
 
@@ -216,6 +219,7 @@ def _add_demo(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--seed", type=int, default=1337)
     sp.add_argument("--out-dir", default="runs", metavar="DIR")
     sp.add_argument("--format", choices=["table", "json"], default="table")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_demo)
 
 
@@ -232,14 +236,37 @@ def _add_bench(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--out-dir", default="runs", metavar="DIR")
     sp.add_argument("--format", choices=["table", "json"], default="table")
     sp.add_argument("--save", metavar="FILE", help="write the full result JSON here")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_bench)
+
+
+def _add_common_flags(sp: argparse.ArgumentParser) -> None:
+    """Add the flags that should work on either side of the subcommand.
+
+    ``--json`` used to be declared twice: once globally and once inside ``_add_verify``.
+    A duplicated option whose subparser default is ``False`` *clobbers* the value the
+    global parser already stored, so ``schedprobe --json verify <run>`` silently ran in
+    text mode, while ``schedprobe verify <run> --json`` worked - the same flag behaving
+    differently depending on where it was typed.
+
+    ``default=argparse.SUPPRESS`` is the fix: when the flag is absent after the
+    subcommand the attribute is never set, so whatever the global parser stored survives.
+    Declaring it through one helper keeps a future subcommand from reintroducing the split.
+    """
+    sp.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_mode",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
 
 
 def _add_verify(sub: argparse._SubParsersAction) -> None:
     sp = sub.add_parser("verify", help="verify the evidence hash chain and manifest")
     sp.add_argument("run", help="run directory or evidence.jsonl path")
     sp.add_argument("--manifest", help="manifest.json to check against (default: alongside the log)")
-    sp.add_argument("--json", action="store_true", dest="json_mode", help=argparse.SUPPRESS)
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_verify)
 
 
@@ -247,6 +274,7 @@ def _add_replay(sub: argparse._SubParsersAction) -> None:
     sp = sub.add_parser("replay", help="re-derive scheduling decisions from a log (offline)")
     sp.add_argument("run", help="run directory or evidence.jsonl path")
     sp.add_argument("--strict", action="store_true", help="exit non-zero on any divergence")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_replay)
 
 
@@ -256,6 +284,7 @@ def _add_explain(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--pair", metavar="HOST:PORT", help="focus on one pair")
     sp.add_argument("--top", type=int, default=25, help="rows to show (0 = all)")
     sp.add_argument("--reasons", action="store_true", help="print only the reason histogram")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_explain)
 
 
@@ -264,6 +293,7 @@ def _add_diff(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("left", help="older run directory")
     sp.add_argument("right", help="newer run directory")
     sp.add_argument("--save", metavar="FILE", help="write the diff JSON here")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_diff)
 
 
@@ -275,6 +305,7 @@ def _add_hostinfo(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--timeout", type=float, default=1.0, metavar="S")
     sp.add_argument("--allow-public", action="store_true")
     sp.add_argument("--out-dir", default="runs", metavar="DIR")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_hostinfo)
 
 
@@ -289,15 +320,67 @@ def _add_config(sub: argparse._SubParsersAction) -> None:
     show = nested.add_parser("show", help="print the effective default configuration")
     for child in (init, validate, show):
         child.set_defaults(func=cmd_config)
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_config)
 
 
 def _add_version(sub: argparse._SubParsersAction) -> None:
     sp = sub.add_parser("version", help="print version information")
+    _add_common_flags(sp)
     sp.set_defaults(func=cmd_version)
 
 
 # ------------------------------------------------------------------------- helpers
+def _add_export(sub: argparse._SubParsersAction) -> None:
+    sp = sub.add_parser(
+        "export",
+        help="write a redacted, non-replayable derivative of an evidence log",
+        description=(
+            "The evidence log is the confidential audit record: it keeps real addresses so "
+            "that a byte-exact replay can re-derive each host's /24 segment. This command "
+            "writes a derivative that is safe to hand to someone outside the engagement. "
+            "The derivative declares itself as one and cannot be replayed."
+        ),
+    )
+    sp.add_argument("run", help="run directory or evidence.jsonl path")
+    sp.add_argument(
+        "-o", "--out", help="output file or directory (default: <log>.redacted.jsonl alongside it)"
+    )
+    sp.add_argument(
+        "--salt",
+        default="",
+        help=(
+            "hex salt for the pseudonyms. Omit for a random salt that is NOT written to the "
+            "derivative, so a reader cannot brute-force the addresses. Supply one to make an "
+            "export reproducible or to correlate it with the console output of its run."
+        ),
+    )
+    sp.add_argument(
+        "--keep-notes",
+        action="store_true",
+        help="keep --label/--notes/--authorization text instead of replacing it",
+    )
+    _add_common_flags(sp)
+    sp.set_defaults(func=cmd_export)
+
+
+def cmd_export(args: argparse.Namespace, emitter: Emitter) -> int:
+    from ..export import EXPORT_SUFFIX, export_run
+
+    source = _resolve_evidence_path(args.run)
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        out_path = source.with_name(source.stem + EXPORT_SUFFIX)
+    report = export_run(source, out_path, salt=args.salt, keep_notes=bool(args.keep_notes))
+    payload = report.to_dict()
+    payload["ok"] = True
+    emitter.say(render_export(payload), force=not emitter.json_mode)
+    if emitter.json_mode:
+        emitter.data(payload)
+    return EXIT_OK
+
+
 def _resolve_evidence_path(run: str) -> Path:
     path = Path(run)
     if path.is_dir():
@@ -431,7 +514,7 @@ def _report_run(run: ScanRun, emitter: Emitter, args: argparse.Namespace) -> int
                 include_closed=bool(getattr(args, "include_closed", False)),
                 max_rows=int(getattr(args, "max_rows", 200)),
             ),
-            force=True,
+            force=not emitter.json_mode,
         )
     if fmt in ("json", "jsonl", "csv"):
         target = run.out_dir / f"results.{fmt}"
@@ -443,10 +526,10 @@ def _report_run(run: ScanRun, emitter: Emitter, args: argparse.Namespace) -> int
             include_closed=bool(getattr(args, "include_closed", True)),
             max_results=int(getattr(args, "max_results", 0)),
         )
-        emitter.say(f"results written to {target}", force=True)
-    emitter.say(f"evidence: {run.evidence_path}", force=True)
-    emitter.say(f"manifest: {run.manifest_path}", force=True)
-    emitter.say(f"chain verified: {run.chain_ok}", force=True)
+        emitter.say(f"results written to {target}", force=not emitter.json_mode)
+    emitter.say(f"evidence: {run.evidence_path}", force=not emitter.json_mode)
+    emitter.say(f"manifest: {run.manifest_path}", force=not emitter.json_mode)
+    emitter.say(f"chain verified: {run.chain_ok}", force=not emitter.json_mode)
     return EXIT_OK if run.chain_ok else EXIT_EVIDENCE
 
 
@@ -487,21 +570,21 @@ def cmd_demo(args: argparse.Namespace, emitter: Emitter) -> int:
     emitter.say("")
     emitter.say(
         render_run_table(run.results, display_host=run.display_host, include_closed=False, max_rows=40),
-        force=True,
+        force=not emitter.json_mode,
     )
 
     status = verify_chain(run.evidence_path)
     emitter.say("")
-    emitter.say(render_verify(status_to_dict(run.evidence_path, status)), force=True)
+    emitter.say(render_verify(status_to_dict(run.evidence_path, status)), force=not emitter.json_mode)
 
     report = replay_chain(run.evidence_path)
     emitter.say("")
-    emitter.say(render_replay(report.to_dict()), force=True)
+    emitter.say(render_replay(report.to_dict()), force=not emitter.json_mode)
 
     rows = decision_timeline(run.evidence_path)
     pruned = [segment for segment in run.segments if segment["pruned"]]
     emitter.say("")
-    emitter.say("[step 4/4 explain] why the sweep went where it went", force=True)
+    emitter.say("[step 4/4 explain] why the sweep went where it went", force=not emitter.json_mode)
     emitter.say(f"  decisions recorded : {len(rows)}")
     emitter.say(f"  reason histogram   : {json.dumps(reason_histogram(rows), sort_keys=True)}")
     if pruned:
@@ -567,13 +650,13 @@ def cmd_bench(args: argparse.Namespace, emitter: Emitter) -> int:
     if emitter.json_mode or args.format == "json":
         emitter.data(payload)
     else:
-        emitter.say(render_benchmark_table(payload), force=True)
+        emitter.say(render_benchmark_table(payload), force=not emitter.json_mode)
     if args.save:
         # Honour the requested filename: the earlier version passed only the parent
         # directory and always produced ``benchmark.json``, so a caller asking for
         # ``--save results/run-7.json`` silently got a different file.
         path = write_results(args.save, payload)
-        emitter.say(f"full results: {path}", force=True)
+        emitter.say(f"full results: {path}", force=not emitter.json_mode)
     return EXIT_OK
 
 
@@ -601,7 +684,7 @@ def cmd_verify(args: argparse.Namespace, emitter: Emitter) -> int:
             payload["reason"] = payload.get("reason") or "manifest digest does not match the evidence log"
     elif args.manifest:
         raise EvidenceError("manifest not found", path=str(manifest_path))
-    emitter.say(render_verify(payload), force=True)
+    emitter.say(render_verify(payload), force=not emitter.json_mode)
     if emitter.json_mode:
         emitter.data(payload)
     return EXIT_OK if payload["ok"] else EXIT_EVIDENCE
@@ -614,7 +697,7 @@ def cmd_replay(args: argparse.Namespace, emitter: Emitter) -> int:
     if emitter.json_mode:
         emitter.data(payload)
     else:
-        emitter.say(render_replay(payload), force=True)
+        emitter.say(render_replay(payload), force=not emitter.json_mode)
     # Without --strict, a divergence is reported but is not a failure: the log is still
     # a valid record of a run whose scheduler could not be reproduced. With --strict it
     # is a hard error, which is what CI wants.
@@ -630,7 +713,8 @@ def cmd_explain(args: argparse.Namespace, emitter: Emitter) -> int:
         raise EvidenceError("no probe decisions in this log", path=str(path))
     histogram = reason_histogram(row.get("scheduled_reason") for row in rows)
     if args.reasons:
-        emitter.say(json.dumps(histogram, indent=2, sort_keys=True), force=True)
+        # A payload, not human prose - so it goes through ``data`` and survives --json.
+        emitter.data(histogram)
         return EXIT_OK
     selected = rows
     if args.pair:
@@ -676,7 +760,7 @@ def cmd_explain(args: argparse.Namespace, emitter: Emitter) -> int:
         )
     if len(selected) > limit:
         lines.append(f"... {len(selected) - limit} more rows (--top 0 for all)")
-    emitter.say("\n".join(lines), force=True)
+    emitter.say("\n".join(lines), force=not emitter.json_mode)
     if emitter.json_mode:
         emitter.data({"rows": selected[:limit], "reasons": histogram, "total": len(rows)})
     return EXIT_OK
@@ -700,13 +784,13 @@ def cmd_diff(args: argparse.Namespace, emitter: Emitter) -> int:
                     "note": f"anti-flap rules {report.rules_version}",
                 }
             ),
-            force=True,
+            force=not emitter.json_mode,
         )
     if args.save:
         target = Path(args.save)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        emitter.say(f"diff written to {target}", force=True)
+        emitter.say(f"diff written to {target}", force=not emitter.json_mode)
     return EXIT_OK
 
 
@@ -794,7 +878,7 @@ def cmd_hostinfo(args: argparse.Namespace, emitter: Emitter) -> int:
 def cmd_config(args: argparse.Namespace, emitter: Emitter) -> int:
     action = getattr(args, "config_command", None)
     if action is None:
-        emitter.say("usage: schedprobe config {init|validate|show} [path]", force=True)
+        emitter.say("usage: schedprobe config {init|validate|show} [path]", force=not emitter.json_mode)
         return EXIT_USAGE
     if action == "init":
         target = Path(args.path)
@@ -803,7 +887,7 @@ def cmd_config(args: argparse.Namespace, emitter: Emitter) -> int:
         template = _config_template()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(template, encoding="utf-8")
-        emitter.say(f"wrote {target}", force=True)
+        emitter.say(f"wrote {target}", force=not emitter.json_mode)
         return EXIT_OK
     if action == "validate":
         config = load_config(args.path)
@@ -811,14 +895,16 @@ def cmd_config(args: argparse.Namespace, emitter: Emitter) -> int:
         emitter.say(
             f"OK {args.path}: {len(config.targets)} targets, {len(config.ports)} ports, "
             f"planner={config.planner.kind}, budget={config.planner.cost_budget}",
-            force=True,
+            force=not emitter.json_mode,
         )
         if emitter.json_mode:
             emitter.data(config_to_dict(config))
         return EXIT_OK
     if action == "show":
         payload = config_to_dict(default_config())
-        emitter.say(json.dumps(payload, indent=2, sort_keys=True), force=True)
+        # ``data`` is the machine-readable channel in both modes; routing the payload
+        # through ``say`` and leaning on ``force`` to defeat json mode was the bug.
+        emitter.data(payload)
         return EXIT_OK
     raise ConfigError("unknown config action", action=action)
 
@@ -885,7 +971,7 @@ def cmd_version(args: argparse.Namespace, emitter: Emitter) -> int:
         "runtime_dependencies": [],
         "deterministic_mode_available": True,
     }
-    emitter.say(json.dumps(payload, indent=2, sort_keys=True), force=True)
+    emitter.data(payload)
     return EXIT_OK
 
 
