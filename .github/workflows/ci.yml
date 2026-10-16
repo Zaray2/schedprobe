@@ -1,0 +1,87 @@
+# CI for schedprobe.
+#
+# Design notes (keep them in sync with the workflow, not with wishful thinking):
+#   * The test suite is plain stdlib ``unittest`` on purpose - it must run in a
+#     locked-down environment without a pytest plugin ecosystem. pytest is installed
+#     only because it is in the ``dev`` extra; it is NOT the primary runner here.
+#   * ``python -m pip install -e ".[dev]"`` is the only install step: the package
+#     itself has zero runtime dependencies (pyproject.toml: dependencies = []).
+#   * ``ruff check .`` lints the whole repository, and pyproject.toml's
+#     [tool.ruff.lint.per-file-ignores] only exempts ``tests/*`` (PLR2004, SLF001)
+#     and ``bench/*`` (T201). ``scripts/*.py`` is therefore linted as application code.
+#   * The benchmark smoke step is expected to write artifacts: the harness writes to
+#     ``bench/runs/`` and ``scripts/run_published_bench.py`` also rewrites
+#     ``docs/research/benchmark-raw.json`` (see RAW_PATH in that script). That is
+#     intended for a smoke run; the outputs are uploaded as build artifacts and are
+#     never committed back to the repository.
+#   * This workflow has NOT been run on GitHub from this checkout (the working copy
+#     has no .git metadata), so treat the first run as unverified.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package with dev extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Unit tests (stdlib unittest)
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy (strict settings from pyproject.toml)
+        run: mypy src/schedprobe
+
+      - name: Benchmark smoke (deterministic simulator, no network access)
+        # The simulator backend is used for every scenario, so this step never
+        # contacts a remote host. It is a smoke test of the harness end to end:
+        # it must not raise, and it must produce bench/ artifacts.
+        run: python scripts/run_published_bench.py 2>&1 | tee bench-published.ci.txt
+
+      - name: Upload benchmark artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-python-${{ matrix.python-version }}
+          path: |
+            bench/
+            bench-published.ci.txt
+            docs/research/benchmark-raw.json
+          if-no-files-found: warn
+          retention-days: 14

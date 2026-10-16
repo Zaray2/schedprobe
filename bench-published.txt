@@ -1,0 +1,89 @@
+== cost to full recall (prune_mode=defer, seed=1337) ==
+
+### segmented-sweep
+  adaptive           b5000=no (0%)  b15000=9054  b30000=16861  b60000=16561  b120000=16606  b200000=16606
+  fixed              b5000=no (0%)  b15000=no (0%)  b30000=no (0%)  b60000=no (0%)  b120000=no (0%)  b200000=no (0%)
+  fixed-longtimeout  b5000=no (0%)  b15000=no (0%)  b30000=no (0%)  b60000=no (0%)  b120000=no (0%)  b200000=no (0%)
+  random             b5000=no (0%)  b15000=no (0%)  b30000=no (0%)  b60000=no (0%)  b120000=no (0%)  b200000=no (33%)
+
+### blackhole-segment
+  adaptive           b15000=8508  b40000=25308  b80000=28908  b150000=28908  b300000=28908
+  fixed              b15000=no (70%)  b40000=no (70%)  b80000=50501  b150000=50501  b300000=50501
+  fixed-longtimeout  b15000=no (70%)  b40000=no (70%)  b80000=50501  b150000=50501  b300000=50501
+  random             b15000=no (30%)  b40000=no (90%)  b80000=48717  b150000=48717  b300000=48717
+
+### segmented-filtered
+  adaptive           b15000=no (92%)  b40000=no (92%)  b80000=no (92%)  b150000=94331  b300000=94331
+  fixed              b15000=no (58%)  b40000=no (58%)  b80000=63701  b150000=63701  b300000=63701
+  fixed-longtimeout  b15000=no (58%)  b40000=no (58%)  b80000=63701  b150000=63701  b300000=63701
+  random             b15000=no (17%)  b40000=no (25%)  b80000=no (83%)  b150000=97901  b300000=97901
+
+### wide-sweep
+  adaptive           b20000=no (0%)  b60000=no (33%)  b120000=no (33%)  b250000=no (33%)
+  fixed              b20000=no (33%)  b60000=no (67%)  b120000=no (67%)  b250000=no (67%)
+  fixed-longtimeout  b20000=no (33%)  b60000=no (67%)  b120000=no (67%)  b250000=no (67%)
+  random             b20000=no (0%)  b60000=no (0%)  b120000=no (0%)  b250000=no (0%)
+
+### mixed-lossy
+  adaptive           b5000=no (67%)  b15000=no (67%)  b40000=no (67%)
+  fixed              b5000=no (67%)  b15000=no (67%)  b40000=no (67%)
+  fixed-longtimeout  b5000=no (67%)  b15000=no (67%)  b40000=no (67%)
+  random             b5000=no (0%)  b15000=no (67%)  b40000=no (67%)
+
+### healthy
+  adaptive           b5000=49  b20000=49
+  fixed              b5000=49  b20000=49
+  fixed-longtimeout  b5000=49  b20000=49
+  random             b5000=49  b20000=49
+
+== headline cases ==
+
+### segmented-sweep budget=150000 (17 hosts x 64 ports)
+  adaptive           recall=100.0% cost=  149142 waste= 98.9% opens=3/3 full_recall_cost=16606
+  fixed              recall=  0.0% cost=  127200 waste=100.0% opens=0/3 full_recall_cost=None
+  random             recall=  0.0% cost=  127109 waste= 99.6% opens=0/3 full_recall_cost=None
+  fixed-longtimeout  recall=  0.0% cost=  127200 waste=100.0% opens=0/3 full_recall_cost=None
+
+### segmented-sweep budget=30000 (17 hosts x 64 ports)
+  adaptive           recall=100.0% cost=   28725 waste= 94.7% opens=3/3 full_recall_cost=16861
+  fixed              recall=  0.0% cost=   25200 waste=100.0% opens=0/3 full_recall_cost=None
+  random             recall=  0.0% cost=   25329 waste= 99.5% opens=0/3 full_recall_cost=None
+  fixed-longtimeout  recall=  0.0% cost=   25200 waste=100.0% opens=0/3 full_recall_cost=None
+
+### segmented-sweep budget=5000 (17 hosts x 64 ports)
+  adaptive           recall=  0.0% cost=    4815 waste= 87.2% opens=0/3 full_recall_cost=None
+  fixed              recall=  0.0% cost=    4200 waste=100.0% opens=0/3 full_recall_cost=None
+  random             recall=  0.0% cost=    4222 waste= 99.5% opens=0/3 full_recall_cost=None
+  fixed-longtimeout  recall=  0.0% cost=    4200 waste=100.0% opens=0/3 full_recall_cost=None
+
+### blackhole-segment budget=80000 (17 hosts x 7 ports)
+  adaptive           recall=100.0% cost=   67952 waste= 99.8% opens=10/10 full_recall_cost=28908
+  fixed              recall=100.0% cost=   50519 waste= 99.8% opens=10/10 full_recall_cost=50501
+  random             recall=100.0% cost=   50519 waste= 99.8% opens=10/10 full_recall_cost=48717
+  fixed-longtimeout  recall=100.0% cost=   50519 waste= 99.8% opens=10/10 full_recall_cost=50501
+
+### segmented-filtered budget=40000 (29 hosts x 7 ports)
+  adaptive           recall= 91.7% cost=   32832 waste= 99.7% opens=11/12 full_recall_cost=None
+  fixed              recall= 58.3% cost=   33649 waste= 99.9% opens=7/12 full_recall_cost=None
+  random             recall= 25.0% cost=   33625 waste= 99.9% opens=3/12 full_recall_cost=None
+  fixed-longtimeout  recall= 58.3% cost=   33649 waste= 99.9% opens=7/12 full_recall_cost=None
+
+### wide-sweep budget=60000 (3 hosts x 1024 ports)
+  adaptive           recall= 33.3% cost=   50401 waste=100.0% opens=1/3 full_recall_cost=None
+  fixed              recall= 66.7% cost=   50402 waste=100.0% opens=2/3 full_recall_cost=None
+  random             recall=  0.0% cost=   51000 waste=100.0% opens=0/3 full_recall_cost=None
+  fixed-longtimeout  recall= 66.7% cost=   50402 waste=100.0% opens=2/3 full_recall_cost=None
+
+### mixed-lossy budget=15000 (3 hosts x 6 ports)
+  adaptive           recall= 66.7% cost=    8826 waste= 88.4% opens=2/3 full_recall_cost=None
+  fixed              recall= 66.7% cost=    6426 waste= 93.4% opens=2/3 full_recall_cost=None
+  random             recall= 66.7% cost=    6426 waste= 93.4% opens=2/3 full_recall_cost=None
+  fixed-longtimeout  recall= 66.7% cost=    6426 waste= 93.4% opens=2/3 full_recall_cost=None
+
+### healthy budget=5000 (3 hosts x 7 ports)
+  adaptive           recall=100.0% cost=      49 waste=  0.0% opens=7/7 full_recall_cost=49
+  fixed              recall=100.0% cost=      49 waste=  0.0% opens=7/7 full_recall_cost=49
+  random             recall=100.0% cost=      49 waste=  0.0% opens=7/7 full_recall_cost=49
+  fixed-longtimeout  recall=100.0% cost=      49 waste=  0.0% opens=7/7 full_recall_cost=49
+
+wrote docs\research\benchmark-raw.json

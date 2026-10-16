@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schedprobe"
+version = "0.1.0"
+description = "Budget-aware, auditable TCP probe scheduler: segment-adaptive replanning with a verifiable decision log"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "schedprobe contributors" }]
+keywords = [
+    "security", "red-team", "port-scanner", "scheduling", "audit", "reproducibility",
+    "offensive-security", "asyncio",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+# Zero runtime dependencies by design: an offensive-security tool that needs a
+# dependency tree is harder to audit and harder to run on a locked-down host.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/Zaray2/schedprobe"
+Issues = "https://github.com/Zaray2/schedprobe/issues"
+Changelog = "https://github.com/Zaray2/schedprobe/blob/main/CHANGELOG.md"
+
+[project.scripts]
+schedprobe = "schedprobe.cli.main:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+schedprobe = ["py.typed", "data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "slow: tests that perform real socket I/O on the loopback interface",
+    "network: tests that need the local network stack (no external hosts)",
+]
+
+[tool.ruff]
+line-length = 108
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "PL", "RUF"]
+ignore = [
+    "PLR0911",  # too many return statements: dispatch tables read better this way
+    "PLR0912",  # too many branches in the engine loop; splitting it hurts clarity
+    "PLR0915",  # too many statements in argparse setup
+    "PLR2004",  # magic values in tests are fine
+    "SIM108",   # ternaries are not always clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "SLF001"]
+"bench/*" = ["T201"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["schedprobe"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+show_error_codes = true

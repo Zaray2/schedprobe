@@ -1,0 +1,66 @@
+# Python bytecode and build artefacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test and type-checker caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# Run artefacts. Every scan writes an evidence log, a manifest and (optionally) a
+# results file. These belong in a case folder or an attachment store, never in git:
+# an evidence log names live hosts, ports and timings.
+runs/
+runs-*/
+bench/runs/
+bench-probe/
+*.evidence.jsonl
+evidence.jsonl
+manifest.json
+
+# The machine-readable benchmark result is committed (docs/research/benchmark-raw.json);
+# its human-readable stdout archive is committed too, because README references it.
+# Everything under bench/ is regenerated and stays out of git.
+# Editors and OS cruft
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets. The tool takes no credentials, but a stray .env must never be committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+# Leftovers from an interrupted pip install -e . in an offline environment.
+pip-build-env-*/
+pip-build-tracker-*/
+pip-ephem-wheel-cache-*/
+pip-install-*/
+pip-uninstall-*/
+.venv-test/
+

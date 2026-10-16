@@ -1,0 +1,46 @@
+# Example: a small authorized-scan configuration.
+#
+# Copy this file and edit the values, then run:
+#     schedprobe scan -c examples/lab-config.toml
+#
+# The defaults below describe a *local simulator* run: they contact nothing.
+# To probe real hosts, switch `backend = "real"` and set `targets` to systems you
+# are authorized to test. `safety.allow_public` stays false on purpose.
+
+# These are the hosts of the `blackhole-segment` simulation scenario, so this file runs
+# as-is and shows the adaptive scheduler doing something interesting: one healthy /24,
+# one /24 that drops everything, one small mixed /24.
+targets = ["10.0.10.5", "10.0.10.6", "10.0.10.7", "10.0.20.10", "10.0.20.11",
+           "10.0.20.12", "10.0.30.5", "10.0.30.6"]
+ports = [22, 80, 443, 3306, 6379, 8080, 8443]
+backend = "fake"
+scenario = "blackhole-segment"
+run_label = "lab-simulator"
+notes = "example configuration; no network traffic while backend = fake"
+
+[planner]
+kind = "adaptive"
+seed = 1337
+cost_budget = 60000
+prefix_len = 24
+prune_mode = "defer"
+confirm_min_attempts = 1
+confirm_max_drop_ratio = 0.5
+
+[network]
+concurrency = 64
+base_timeout_s = 0.6
+min_timeout_s = 0.15
+max_timeout_s = 3.0
+rate_limit_pps = 0.0
+
+[output]
+out_dir = "runs"
+redact = false
+format = "table"
+
+[safety]
+allow_public = false
+allow_private = true
+allow_loopback = true
+allow_dns = true

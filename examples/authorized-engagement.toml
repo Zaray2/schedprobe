@@ -1,0 +1,40 @@
+# Example: an authorized external engagement, written the way a real case file would be.
+#
+# TWO THINGS TO CHANGE BEFORE USE:
+#   1. `targets` -> the assets named in your authorization document.
+#   2. `allow_public` -> true. Without it the scope guard refuses public addresses, which
+#      is the intended default: an unset flag should never turn into an unauthorized scan.
+#
+# Keep `rate_limit_pps` set for anything shared, and keep the authorization reference in
+# `notes` so the run header carries the engagement id.
+
+targets = ["203.0.113.10", "203.0.113.11"]   # documentation range (RFC 5737)
+ports = [22, 80, 443, 8080, 8443]
+backend = "real"
+run_label = "eng-2026-014-discovery"
+notes = "authorization ticket ENG-2026-014; window 02:00-05:00 UTC"
+
+[planner]
+kind = "adaptive"
+seed = 20260101
+cost_budget = 400000
+prefix_len = 24
+prune_mode = "defer"
+
+[network]
+concurrency = 32
+base_timeout_s = 0.8
+min_timeout_s = 0.2
+max_timeout_s = 3.0
+rate_limit_pps = 40          # stay polite on shared infrastructure
+
+[output]
+out_dir = "runs"
+redact = true                 # pseudonymise host identifiers in every artifact
+format = "jsonl"
+
+[safety]
+allow_public = true           # only with a signed authorization on file
+allow_private = true
+allow_loopback = false
+allow_dns = true

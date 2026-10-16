@@ -1,0 +1,17 @@
+# Normalise line endings. Without this, a Windows checkout commits CRLF and every Linux
+# CI run reports a diff on every text file.
+* text=auto eol=lf
+
+# Binary-ish assets that must never be converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+
+# Keep these out of GitHub's language statistics.
+docs/** linguist-documentation
+tests/** linguist-test
+scripts/** linguist-ignored
