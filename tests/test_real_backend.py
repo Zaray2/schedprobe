@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import shutil
 import socket
 import subprocess
@@ -48,28 +49,44 @@ def _have_command(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def _loopback_refuses() -> bool:
-    """Does this host's loopback stack RST an unopened port, or silently drop the SYN?
+def _raw_connect_outcome(port: int, host: str = "127.0.0.1") -> PortState:
+    """Classify a port with a plain blocking socket, bypassing the tool entirely.
 
-    Linux resets, so a closed port is classifiable. The Windows host this repository was
-    authored on drops, so a closed port is indistinguishable from a filtered one. Measured
-    rather than assumed, because the answer decides what the tests below may assert.
+    Used as an independent second opinion: this path does not touch asyncio, the
+    concurrency semaphore, the OSError classifier or the evidence log, so agreement
+    between it and the tool is evidence about the tool rather than about the fixture.
     """
-    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    holder.bind(("127.0.0.1", 0))
-    port = holder.getsockname()[1]
-    holder.close()
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(1.0)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1.0)
     try:
-        probe.connect(("127.0.0.1", port))
-        return True
+        sock.connect((host, port))
+        return PortState.OPEN
     except ConnectionRefusedError:
-        return True
-    except OSError:
-        return False
+        return PortState.CLOSED
+    except ConnectionResetError:
+        return PortState.CLOSED
+    except TimeoutError:
+        return PortState.FILTERED
+    except OSError as exc:
+        if getattr(exc, "errno", None) in (errno.ECONNREFUSED, errno.ECONNRESET):
+            return PortState.CLOSED
+        return PortState.FILTERED
     finally:
-        probe.close()
+        sock.close()
+
+
+# Measured on the Windows host this repository was authored on, with a plain blocking
+# socket:
+#
+#     bind(("127.0.0.1", 0)); close()  ->  TimeoutError after 2.005s   (bound then closed)
+#     bind(("127.0.0.1", 0)); close()  ->  TimeoutError after 2.012s   (never listened)
+#
+# i.e. the loopback stack drops SYN rather than resetting it, so a port with no listener is
+# indistinguishable from a filtered one and `Verdict.REFUSED` is unreachable there. Linux
+# resets instead. No test below asserts either behaviour directly - they require the tool
+# and a raw socket to agree, which is true on both - because a branch on the platform is a
+# branch that cannot be checked locally and a red CI run on three Python versions is what
+# that costs.
 
 
 class _Fixture:
@@ -84,8 +101,11 @@ class _Fixture:
         self._threads: list[threading.Thread] = []
         self._stop = threading.Event()
         self.open_port = 0
-        self.refused_port = 0
-        self.unbound_port = 0
+        # A port that was bound and is now closed. There is deliberately no second
+        # "never bound" field: created the same way they are the same thing, and an
+        # earlier version of this file treated them as different, which passed on Windows
+        # and failed on Linux.
+        self.closed_port = 0
         self.banner = b"SSH-2.0-test\x1b]0;evil\x07\r\n"
 
     def _serve(self, sock: socket.socket, *, banner: bytes) -> None:
@@ -112,18 +132,13 @@ class _Fixture:
         thread.start()
         self._threads.append(thread)
 
-        # A port that was bound and is now closed: connecting yields ECONNREFUSED.
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.bind(("127.0.0.1", 0))
-        self.refused_port = probe.getsockname()[1]
-        probe.close()
-
-        # A port nobody ever bound. Held briefly to learn a free number, then released, so
-        # the kernel will drop SYNs rather than refuse them.
-        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        holder.bind(("127.0.0.1", 0))
-        self.unbound_port = holder.getsockname()[1]
-        holder.close()
+        # Bound to learn a free port number, then released. Whether connecting to it now
+        # resets or drops is a property of the stack, not of this fixture - see the
+        # measurement note above the test class.
+        closed = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        closed.bind(("127.0.0.1", 0))
+        self.closed_port = closed.getsockname()[1]
+        closed.close()
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -161,7 +176,23 @@ def _run(config: ScanConfig, out_dir: Path, run_id: str, *, grab_banner: bool = 
 
 
 class TestRealBackendClassification(unittest.TestCase):
-    """The four outcomes the classifier has to get right, against real sockets."""
+    """Four outcomes, checked against an independent measurement of the same port.
+
+    Two earlier versions of this class were wrong in instructive ways, and both are worth
+    keeping in mind when reading it:
+
+    * the first assumed Linux behaviour (a port with no listener is CLOSED) and failed on
+      the authoring host, where the loopback stack drops SYN instead of resetting it;
+    * the second branched on a platform probe and asserted CLOSED or FILTERED accordingly.
+      That passes on both platforms and therefore verifies little - and it cannot be
+      checked locally for the branch the local machine is not on, which is exactly the
+      failure mode that produced a red CI run on three Python versions.
+
+    What replaced them is platform-independent and strictly stronger: measure the *same
+    port* twice, once with a raw blocking socket and once through the tool, and require the
+    two to agree. Whichever way the stack behaves, the classifier has to match it - and a
+    test that asserts agreement cannot drift when the platform changes underneath it.
+    """
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="schedprobe-real-"))
@@ -175,55 +206,34 @@ class TestRealBackendClassification(unittest.TestCase):
             self.assertTrue(run.chain_ok)
             self.assertEqual(run.manifest["probe_errors"], [])
 
-    def test_a_closed_port_is_never_reported_open(self) -> None:
-        # The safety property, and the only one that holds on every platform: a port with
-        # nothing behind it must never be claimed as open.
+    def test_the_tool_agrees_with_a_raw_socket_about_a_port_with_no_listener(self) -> None:
+        # The independent-measurement test. A raw blocking connect is a second opinion that
+        # does not go through asyncio, the semaphore, the classifier or the evidence log.
         with _Fixture() as fixture:
-            run = _run(_config((fixture.refused_port,), budget=20_000), self.tmp, "real-refused")
-            result = run.results[("127.0.0.1", fixture.refused_port)]
-            self.assertIsNot(
+            expected = _raw_connect_outcome(fixture.closed_port)
+            run = _run(_config((fixture.closed_port,), budget=20_000), self.tmp, "real-nolisten")
+            result = run.results[("127.0.0.1", fixture.closed_port)]
+            self.assertIs(
                 result.state,
-                PortState.OPEN,
-                "a port with no listener was reported open",
+                expected,
+                f"the raw socket saw {expected.value} but the tool reported "
+                f"{result.state.value} ({result.verdict.value})",
             )
-            self.assertIs(result.state, PortState.CLOSED if _loopback_refuses() else PortState.FILTERED)
+            self.assertIsNot(result.state, PortState.OPEN)
 
-    def test_the_refusal_path_classifies_as_closed_where_the_stack_supports_it(self) -> None:
-        # Measured platform difference, and the reason this test is conditional rather
-        # than a plain assertion.
-        #
-        # On Linux (and in CI) connecting to an unbound loopback port yields ECONNREFUSED
-        # immediately, so `Verdict.REFUSED` is exercised and the port is reported closed.
-        # On the Windows host this repository was authored on it does not: the local stack
-        # drops the SYN instead of resetting it, so the connect times out and the port is
-        # reported filtered. Measured directly, both for a bound-then-closed port and for
-        # one that was never bound:
-        #
-        #     bind(("127.0.0.1", 0)); close()  ->  TimeoutError after 2.005s
-        #     bind(("127.0.0.1", 0)); close()  ->  TimeoutError after 2.012s  (never listened)
-        #
-        # The consequence for the tool is worth stating rather than hiding: on Windows,
-        # a loopback target cannot be distinguished between "closed" and "filtered", so
-        # `closed_count` stays zero and the cheapest form of proof-of-life is unavailable
-        # to the segment score. That is a platform limitation, not a classifier bug.
+    def test_the_verdict_matches_the_state(self) -> None:
+        # Consistency inside one classification: a port reported closed must carry a verdict
+        # that means "the stack answered and refused", and one reported filtered must carry
+        # the timeout verdict. This catches a classifier that maps an errno to the right
+        # state but the wrong verdict, which the state-only assertions would miss.
         with _Fixture() as fixture:
-            run = _run(_config((fixture.refused_port,), budget=20_000), self.tmp, "real-refused-2")
-            result = run.results[("127.0.0.1", fixture.refused_port)]
-            if _loopback_refuses():
-                self.assertIs(result.state, PortState.CLOSED, result.verdict.value)
+            run = _run(_config((fixture.closed_port,), budget=20_000), self.tmp, "real-verdict")
+            result = run.results[("127.0.0.1", fixture.closed_port)]
+            if result.state is PortState.CLOSED:
                 self.assertIn(result.verdict, (Verdict.REFUSED, Verdict.RESET))
             else:
-                self.skipTest(
-                    "this host's loopback stack drops rather than resets, so the refusal "
-                    "path cannot be exercised here (CI runs it on Linux)"
-                )
-
-    def test_an_unbound_port_is_a_timeout_and_never_a_false_open(self) -> None:
-        with _Fixture() as fixture:
-            run = _run(_config((fixture.unbound_port,), budget=20_000), self.tmp, "real-timeout")
-            result = run.results[("127.0.0.1", fixture.unbound_port)]
-            self.assertIsNot(result.state, PortState.OPEN)
-            self.assertIs(result.state, PortState.FILTERED)
+                self.assertIs(result.state, PortState.FILTERED)
+                self.assertIs(result.verdict, Verdict.TIMEOUT)
 
     def test_a_banner_is_sanitised_before_it_reaches_a_detail(self) -> None:
         # The fixture sends an ESC and a BEL. Both must be gone from the artifact: a
@@ -236,17 +246,18 @@ class TestRealBackendClassification(unittest.TestCase):
             for ch in ("\x1b", "\x07", "\r", "\n"):
                 self.assertNotIn(ch, detail, f"control character {ch!r} survived into detail")
 
-    def test_all_three_outcomes_in_one_run(self) -> None:
+    def test_a_listening_and_a_silent_port_are_not_confused_in_one_run(self) -> None:
         with _Fixture() as fixture:
-            ports = (fixture.open_port, fixture.refused_port, fixture.unbound_port)
+            ports = (fixture.open_port, fixture.closed_port)
             run = _run(_config(ports, budget=60_000), self.tmp, "real-mixed")
             states = {port: run.results[("127.0.0.1", port)].state for port in ports}
             self.assertIs(states[fixture.open_port], PortState.OPEN)
-            self.assertIs(states[fixture.unbound_port], PortState.FILTERED)
-            # The refused port is CLOSED on a stack that resets and FILTERED on one that
-            # drops; either way it must not be OPEN.
-            expected = PortState.CLOSED if _loopback_refuses() else PortState.FILTERED
-            self.assertIs(states[fixture.refused_port], expected)
+            self.assertIsNot(states[fixture.closed_port], PortState.OPEN)
+            self.assertNotEqual(
+                states[fixture.open_port],
+                states[fixture.closed_port],
+                "a listener and a port with no listener must not be classified the same",
+            )
 
 
 class TestRealBackendReproducibility(unittest.TestCase):
@@ -261,7 +272,7 @@ class TestRealBackendReproducibility(unittest.TestCase):
         # test: a run over real sockets must be re-derivable offline from its own log. If
         # asyncio's completion order leaked into the planner, this is where it would show.
         with _Fixture() as fixture:
-            ports = (fixture.open_port, fixture.refused_port, fixture.unbound_port)
+            ports = (fixture.open_port, fixture.closed_port)
             run = _run(_config(ports, budget=60_000), self.tmp, "real-replay")
             report = replay_chain(run.evidence_path, strict=True)
             self.assertTrue(
@@ -275,7 +286,7 @@ class TestRealBackendReproducibility(unittest.TestCase):
         # wall-clock order in which the sockets answered will not be. Slot ordering is what
         # makes that true; this test is what would notice if it stopped being true.
         with _Fixture() as fixture:
-            ports = (fixture.open_port, fixture.refused_port, fixture.unbound_port)
+            ports = (fixture.open_port, fixture.closed_port)
             first = _run(_config(ports, budget=60_000), self.tmp, "real-a")
             second = _run(_config(ports, budget=60_000), self.tmp, "real-b")
 
