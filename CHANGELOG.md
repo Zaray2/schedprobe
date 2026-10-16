@@ -12,6 +12,22 @@
 
 ## [0.1.0] — 未发布（Unreleased）
 
+### 修复
+
+- **CI 首次运行失败（ruff 250 条违规）。** 作者环境未安装 ruff，因此仓库带着 250 条 lint
+  违规被推送。已逐类修复：删除一次性迁移脚本（57 条）、`ruff check --fix` 修正 121 条、
+  手工修复其余（导入提升到模块顶层、行宽、`raise ... from None` 链、`SIM`/`B`/`RUF` 各类），
+  并在 `pyproject.toml` 中为三处**刻意**的惰性导入加了有注释的 per-file ignore。
+- **`ruff format` 与 `mypy` 在此之前从未运行过。** 现已格式化全部 45 个文件，并将 mypy 的
+  25 条报错全部修掉——其中 4 条是真实缺陷而非注解缺失：
+  `replay.py` 中 `recorded_live` 与同函数内一个 `dict[tuple[str, int], float]` 同名不同义；
+  `engine.py` 的 `os.sys.argv`（依赖 `os` 恰好重导出 `sys`）；
+  `real.py` 把 `getaddrinfo` 的 sockaddr 联合类型直接当 `str` 用；
+  `evidence.py` 两处对未校验 JSON 直接 `int()`。
+- **dev extra 收紧版本区间**：`ruff>=0.17,<0.18`。ruff 0.17 新增的规则集（含 `PLC0415`）
+  本身就是首次 CI 失败的原因之一，不锁版本会让 CI 结果随上游漂移。
+
+
 ### 新增
 
 * **调度器核心**：`ScanEngine`（`engine.py`）——并发探测、预算记账、按派发槽位顺序提交观测、

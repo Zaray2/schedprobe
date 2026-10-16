@@ -34,7 +34,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.6",
+    "ruff>=0.17,<0.18",
     "mypy>=1.11",
 ]
 
@@ -82,6 +82,17 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["PLR2004", "SLF001"]
 "bench/*" = ["T201"]
+# Lazy imports are a deliberate, load-bearing pattern in these three places, documented
+# once here rather than as a dozen scattered noqa comments:
+#   * cli/main.py     - a subcommand imports the engine/backend it needs, so `--help`,
+#                       `version` and `config show` do not pay for the whole tool;
+#   * backends/base.py - the backend factory imports its backends on demand, which also
+#                       keeps the "fake vs real" choice out of the import graph;
+#   * config.py       - the scenario-name check imports the simulator catalogue only when
+#                       a scenario is actually configured.
+"src/schedprobe/cli/*" = ["PLC0415"]
+"src/schedprobe/backends/base.py" = ["PLC0415"]
+"src/schedprobe/config.py" = ["PLC0415"]
 
 [tool.mypy]
 python_version = "3.11"

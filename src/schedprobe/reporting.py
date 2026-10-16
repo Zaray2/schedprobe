@@ -17,20 +17,21 @@ import csv
 import io
 import json
 import unicodedata
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from .models import PortState, ProbeResult
 from .util import clamp
 
 __all__ = [
-    "render_table",
-    "render_summary",
-    "render_run_table",
-    "render_verify",
-    "render_replay",
     "render_benchmark_table",
     "render_diff",
+    "render_replay",
+    "render_run_table",
+    "render_summary",
+    "render_table",
+    "render_verify",
     "sanitize",
     "write_results",
 ]
@@ -89,9 +90,24 @@ def render_table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
 def render_summary(summary: Mapping[str, Any], *, title: str = "run summary") -> str:
     """Render a :class:`~schedprobe.engine.RunSummary` dict as aligned key/value lines."""
     order = [
-        "planner", "backend", "cost_unit", "pairs_total", "dispatched", "budget", "cost_spent",
-        "budget_used_ratio", "cost_of_filtered", "waste_ratio", "open", "closed", "filtered",
-        "undetermined", "confirms", "pruned_segments", "elapsed_s", "time_to_first_open_s",
+        "planner",
+        "backend",
+        "cost_unit",
+        "pairs_total",
+        "dispatched",
+        "budget",
+        "cost_spent",
+        "budget_used_ratio",
+        "cost_of_filtered",
+        "waste_ratio",
+        "open",
+        "closed",
+        "filtered",
+        "undetermined",
+        "confirms",
+        "pruned_segments",
+        "elapsed_s",
+        "time_to_first_open_s",
         "first_open",
     ]
     lines = [f"[{sanitize(title)}]"]
@@ -146,9 +162,7 @@ def render_run_table(
                 sanitize(result.detail, 40),
             ]
         )
-    table = render_table(
-        ["host", "port", "state", "verdict", "confirm", "conf", "cost", "detail"], rows
-    )
+    table = render_table(["host", "port", "state", "verdict", "confirm", "conf", "cost", "detail"], rows)
     hidden = len(selected) - len(shown)
     footer = []
     if hidden > 0:
@@ -219,8 +233,16 @@ def render_benchmark_table(payload: Mapping[str, Any]) -> str:
         )
     table = render_table(
         [
-            "planner", "open", "truth", "recall", "precision", "dispatched",
-            "cost", "cost_filtered", "waste", "ttfo_cost",
+            "planner",
+            "open",
+            "truth",
+            "recall",
+            "precision",
+            "dispatched",
+            "cost",
+            "cost_filtered",
+            "waste",
+            "ttfo_cost",
         ],
         rows,
     )
@@ -252,12 +274,12 @@ def render_diff(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_results(
+def write_results(  # noqa: PLR0913 - output shaping options, all keyword-only
     path: str | Path,
     results: Mapping[tuple[str, int], ProbeResult],
     *,
     fmt: str = "json",
-    display_host=None,
+    display_host: Callable[[str], str] | None = None,
     include_closed: bool = True,
     max_results: int = 0,
 ) -> Path:
@@ -265,7 +287,7 @@ def write_results(
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
-    for (host, port), result in sorted(results.items()):
+    for (host, _port), result in sorted(results.items()):
         if result.state is PortState.CLOSED and not include_closed:
             continue
         record = result.to_dict()

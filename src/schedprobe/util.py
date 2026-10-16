@@ -16,24 +16,24 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import random
 import re
 import sys
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 __all__ = [
-    "canonical_json",
-    "sha256_hex",
-    "hash_pair",
-    "derive_rng",
-    "seed_bytes",
-    "redact",
     "SecretFilter",
-    "configure_logging",
-    "get_logger",
-    "format_hhmmss",
+    "canonical_json",
     "clamp",
+    "configure_logging",
+    "derive_rng",
+    "format_hhmmss",
+    "get_logger",
+    "hash_pair",
+    "redact",
+    "seed_bytes",
+    "sha256_hex",
 ]
 
 _HASH_PREFIX = "sha256:"
@@ -58,7 +58,7 @@ def sha256_hex(data: str | bytes) -> str:
 
 def seed_bytes(seed: int | str, salt: str = "") -> bytes:
     """Turn a user-facing seed into 32 bytes deterministically."""
-    material = f"{seed}|{salt}".encode("utf-8")
+    material = f"{seed}|{salt}".encode()
     return hashlib.sha256(material).digest()
 
 
@@ -74,7 +74,7 @@ def hash_pair(host: str, port: int, salt: str = "") -> str:
     not correlatable across runs. Used by ``--redact``.
     """
     key = salt.encode("utf-8")
-    digest = hmac.new(key, f"{host}:{port}".encode("utf-8"), hashlib.sha256).hexdigest()
+    digest = hmac.new(key, f"{host}:{port}".encode(), hashlib.sha256).hexdigest()
     return f"h:{digest[:12]}"
 
 
@@ -111,7 +111,7 @@ class SecretFilter(logging.Filter):
         self._salt = salt
         self._hide_ips = hide_ips
 
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - stdlib API
+    def filter(self, record: logging.LogRecord) -> bool:
         try:
             rendered = record.getMessage()
         except Exception:  # pragma: no cover - defensive, never swallow silently

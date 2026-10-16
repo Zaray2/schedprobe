@@ -12,9 +12,10 @@ regression-tested in ``tests/test_reporting_cli.py``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from .errors import EvidenceError
 from .evidence import read_records
@@ -22,13 +23,13 @@ from .models import PortState, ProbeResult
 from .util import canonical_json
 
 __all__ = [
-    "PortDelta",
-    "DiffReport",
-    "diff_states",
-    "diff_runs",
-    "states_from_chain",
-    "scope_from_chains",
     "RULES_VERSION",
+    "DiffReport",
+    "PortDelta",
+    "diff_runs",
+    "diff_states",
+    "scope_from_chains",
+    "states_from_chain",
 ]
 
 RULES_VERSION = "2024-11-anti-flap-1"
@@ -129,7 +130,7 @@ def _confirmed(states: Sequence[PortState]) -> bool:
     return len(conclusive) >= 2 and len(set(conclusive)) == 1
 
 
-def diff_states(
+def diff_states(  # noqa: PLR0913 - comparison inputs, all keyword-only after the two states
     left_states: Mapping[tuple[str, int], PortState],
     right_states: Mapping[tuple[str, int], PortState],
     *,
@@ -155,7 +156,9 @@ def diff_states(
     report.only_right = len(right_keys - left_keys)
     report.common = len(left_keys & right_keys)
 
-    def history(store, pair: tuple[str, int]) -> list[PortState]:
+    def history(
+        store: Mapping[tuple[str, int], Sequence[PortState]] | None, pair: tuple[str, int]
+    ) -> list[PortState]:
         if store is None:
             return []
         return list(store.get(pair, ()))
@@ -166,28 +169,46 @@ def diff_states(
         if scope is not None and pair not in scope:
             report.deltas.append(
                 PortDelta(
-                    pair[0], pair[1], "not-probed", "info",
-                    before.value, after.value,
+                    pair[0],
+                    pair[1],
+                    "not-probed",
+                    "info",
+                    before.value,
+                    after.value,
                     "pair is outside the intersection of both runs' planned scope",
                 )
             )
             continue
         if pair not in left_states:
             report.deltas.append(
-                PortDelta(pair[0], pair[1], "new", "medium" if after is PortState.OPEN else "info",
-                          "absent", after.value, "pair absent from the left run")
+                PortDelta(
+                    pair[0],
+                    pair[1],
+                    "new",
+                    "medium" if after is PortState.OPEN else "info",
+                    "absent",
+                    after.value,
+                    "pair absent from the left run",
+                )
             )
             continue
         if pair not in right_states:
             report.deltas.append(
-                PortDelta(pair[0], pair[1], "disappeared", "medium" if before is PortState.OPEN else "info",
-                          before.value, "absent", "pair absent from the right run")
+                PortDelta(
+                    pair[0],
+                    pair[1],
+                    "disappeared",
+                    "medium" if before is PortState.OPEN else "info",
+                    before.value,
+                    "absent",
+                    "pair absent from the right run",
+                )
             )
             continue
         if before is after:
             continue
-        before_hist = history(left_history, pair) + [before]
-        after_hist = history(right_history, pair) + [after]
+        before_hist = [*history(left_history, pair), before]
+        after_hist = [*history(right_history, pair), after]
         if _confirmed(before_hist) and _confirmed(after_hist):
             kind = "changed"
             severity = "high" if PortState.OPEN in (before, after) else "low"
@@ -196,9 +217,7 @@ def diff_states(
             kind = "unstable"
             severity = "info"
             detail = _EXPLAIN_UNSTABLE_NO_CONFIRM
-        report.deltas.append(
-            PortDelta(pair[0], pair[1], kind, severity, before.value, after.value, detail)
-        )
+        report.deltas.append(PortDelta(pair[0], pair[1], kind, severity, before.value, after.value, detail))
     report.deltas.sort(key=lambda d: (d.severity, d.kind, d.host, d.port))
     return report
 
@@ -253,8 +272,9 @@ def scope_from_chains(paths: Sequence[str | Path]) -> set[tuple[str, int]]:
         for record in read_records(path):
             if record.kind == "probe":
                 try:
-                    seen.add((str(record.data["observation"]["host"]),
-                              int(record.data["observation"]["port"])))
+                    seen.add(
+                        (str(record.data["observation"]["host"]), int(record.data["observation"]["port"]))
+                    )
                 except (KeyError, TypeError, ValueError):
                     continue
         observed.append(seen)
@@ -305,8 +325,9 @@ def severity_rank(severity: str) -> int:
     return {"high": 0, "medium": 1, "low": 2, "info": 3}.get(severity, 4)
 
 
-def filter_deltas(deltas: Iterable[PortDelta], *, kinds: Sequence[str] | None = None,
-                  min_severity: str = "info") -> list[PortDelta]:
+def filter_deltas(
+    deltas: Iterable[PortDelta], *, kinds: Sequence[str] | None = None, min_severity: str = "info"
+) -> list[PortDelta]:
     threshold = severity_rank(min_severity)
     out: list[PortDelta] = []
     for delta in deltas:

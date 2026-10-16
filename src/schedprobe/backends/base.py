@@ -11,18 +11,21 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Set
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..errors import BackendError
 from ..models import PortState, ProbeResult, Verdict
 
+if TYPE_CHECKING:
+    from ..config import ScanConfig
+
 __all__ = [
-    "ProbeRequest",
     "Backend",
     "BackendStats",
+    "ProbeRequest",
     "ScopedProbeBackend",
-    "confidence_for",
     "build_backend",
+    "confidence_for",
 ]
 
 # Base confidence per verdict. Rationale, in one line each:
@@ -149,15 +152,16 @@ class ScopedProbeBackend:
     name = "scoped"
     cost_unit = "unit"
 
-    def __init__(self, allow: Set[str] | None = None) -> None:
-        self._allowed: Set[str] | None = set(allow) if allow is not None else None
+    def __init__(self, allow: set[str] | None = None) -> None:
+        self._allowed: set[str] | None = set(allow) if allow is not None else None
         self._stats = BackendStats()
         self._started = 0.0
 
     def _assert_scoped(self, host: str) -> None:
         if self._allowed is not None and host not in self._allowed:
             raise BackendError(
-                "probe target is outside the validated scope", host=host,
+                "probe target is outside the validated scope",
+                host=host,
                 hint="build the backend from a validated ScanConfig",
             )
 
@@ -172,7 +176,7 @@ class ScopedProbeBackend:
         return self._stats
 
 
-def build_backend(kind: str, config, hosts: list[str], **kwargs: Any) -> Backend:
+def build_backend(kind: str, config: ScanConfig, hosts: list[str], **kwargs: Any) -> Backend:
     """Instantiate a backend by name, injecting the validated host allow-list.
 
     ``kwargs`` is the union of everything any backend might want (``scenario`` for the
@@ -235,8 +239,7 @@ class RateLimiter:
         interval = 1.0 / self.rate
         async with self._lock:
             now = time.monotonic()
-            if self._next_slot < now:
-                self._next_slot = now
+            self._next_slot = max(self._next_slot, now)
             wait = self._next_slot - now
             self._next_slot += interval
         if wait > 0:

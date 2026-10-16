@@ -9,7 +9,6 @@ manifest digest catches those, which is why the manifest exists.
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,14 +67,12 @@ class TestEvidenceLog(unittest.TestCase):
             EvidenceLog(self.path, "other-run")
 
     def test_rejects_non_serializable_payload(self) -> None:
-        with EvidenceLog(self.path, "run-test", truncate=True) as log:
-            with self.assertRaises(EvidenceError):
-                log.append("probe", {"bad": object()})
+        with EvidenceLog(self.path, "run-test", truncate=True) as log, self.assertRaises(EvidenceError):
+            log.append("probe", {"bad": object()})
 
     def test_rejects_empty_kind(self) -> None:
-        with EvidenceLog(self.path, "run-test", truncate=True) as log:
-            with self.assertRaises(EvidenceError):
-                log.append("", {"x": 1})
+        with EvidenceLog(self.path, "run-test", truncate=True) as log, self.assertRaises(EvidenceError):
+            log.append("", {"x": 1})
 
     def test_canonical_json_is_stable(self) -> None:
         self.assertEqual(canonical_json({"b": 1, "a": [2, 1]}), '{"a":[2,1],"b":1}')
@@ -105,7 +102,7 @@ class TestChainVerification(unittest.TestCase):
     def test_edited_record_is_detected(self) -> None:
         lines = self._lines()
         payload = json.loads(lines[1])
-        payload["data"]["port"] = 9999        # tamper with the body, keep the hash
+        payload["data"]["port"] = 9999  # tamper with the body, keep the hash
         lines[1] = canonical_json(payload)
         self._write_lines(lines)
         status = verify_chain(self.path)
@@ -140,9 +137,9 @@ class TestChainVerification(unittest.TestCase):
         lines = self._lines()
         payload = json.loads(lines[2])
         payload["run_id"] = "hijacked"
-        payload["hash"] = "sha256:" + sha256_hex(canonical_json(
-            {k: v for k, v in payload.items() if k != "hash"}
-        ))
+        payload["hash"] = "sha256:" + sha256_hex(
+            canonical_json({k: v for k, v in payload.items() if k != "hash"})
+        )
         lines[2] = canonical_json(payload)
         self._write_lines(lines)
         self.assertFalse(verify_chain(self.path).ok)
@@ -235,14 +232,33 @@ class TestTimelines(unittest.TestCase):
             "probe",
             {
                 "dispatched": {
-                    "host": host, "port": port, "reason": reason, "timeout_s": 0.6,
-                    "executed_timeout_s": 0.6, "attempt": 1, "is_confirmation": False,
+                    "host": host,
+                    "port": port,
+                    "reason": reason,
+                    "timeout_s": 0.6,
+                    "executed_timeout_s": 0.6,
+                    "attempt": 1,
+                    "is_confirmation": False,
                 },
-                "decision": {"host": host, "port": port + 1, "reason": "sweep-segment-first",
-                             "timeout_s": 0.6, "priority": 0.3, "is_confirmation": False},
-                "observation": {"host": host, "port": port, "state": state, "verdict": "timeout",
-                                "cost_units": 600, "confidence": 0.45, "attempt": 1},
-                "cost_spent": 600, "live_pairs": 10,
+                "decision": {
+                    "host": host,
+                    "port": port + 1,
+                    "reason": "sweep-segment-first",
+                    "timeout_s": 0.6,
+                    "priority": 0.3,
+                    "is_confirmation": False,
+                },
+                "observation": {
+                    "host": host,
+                    "port": port,
+                    "state": state,
+                    "verdict": "timeout",
+                    "cost_units": 600,
+                    "confidence": 0.45,
+                    "attempt": 1,
+                },
+                "cost_spent": 600,
+                "live_pairs": 10,
             },
         )
 

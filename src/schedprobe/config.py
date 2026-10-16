@@ -9,24 +9,25 @@ from __future__ import annotations
 
 import json
 import tomllib
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from .errors import ConfigError, TargetValidationError
 from .models import normalize_target
 from .targets import expand_targets, validate_targets
 
 __all__ = [
-    "PlannerConfig",
     "NetworkConfig",
     "OutputConfig",
+    "PlannerConfig",
     "SafetyConfig",
     "ScanConfig",
-    "default_config",
-    "load_config",
     "config_from_dict",
     "config_to_dict",
+    "default_config",
+    "load_config",
 ]
 
 PLANNER_KINDS = ("adaptive", "fixed", "random", "fixed-longtimeout")
@@ -90,15 +91,11 @@ class PlannerConfig:
 
     def validate(self) -> None:
         if self.kind not in PLANNER_KINDS:
-            raise ConfigError(
-                f"planner.kind must be one of {PLANNER_KINDS}", value=self.kind
-            )
+            raise ConfigError(f"planner.kind must be one of {PLANNER_KINDS}", value=self.kind)
         if self.cost_budget < 1:
             raise ConfigError("planner.cost_budget must be >= 1", value=self.cost_budget)
         if not 0.0 <= self.reserved_ratio < 1.0:
-            raise ConfigError(
-                "planner.reserved_ratio must be in [0, 1)", value=self.reserved_ratio
-            )
+            raise ConfigError("planner.reserved_ratio must be in [0, 1)", value=self.reserved_ratio)
         if not 8 <= self.prefix_len <= 32:
             raise ConfigError("planner.prefix_len must be within [8, 32]", value=self.prefix_len)
         if self.prune_after_consecutive_timeouts < 1:
@@ -211,7 +208,7 @@ class ScanConfig:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
 
     # ---------------------------------------------------------------- validate
-    def validate(self) -> "ScanConfig":
+    def validate(self) -> ScanConfig:
         """Validate every sub-section and normalize targets/ports in place.
 
         Raises :class:`ConfigError` or :class:`TargetValidationError`; never
@@ -297,7 +294,7 @@ class ScanConfig:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "ScanConfig":
+    def from_dict(cls, payload: Mapping[str, Any]) -> ScanConfig:
         known = {f.name for f in fields(cls)}
         unknown = set(payload) - known
         if unknown:

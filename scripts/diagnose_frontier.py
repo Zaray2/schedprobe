@@ -1,6 +1,6 @@
 """Diagnostic: step a replay and compare it with the recorded frontier at every step.
 
-    python scripts/diagnose_frontier.py runs/<run-id>/evidence.jsonl
+python scripts/diagnose_frontier.py runs/<run-id>/evidence.jsonl
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from schedprobe.config import config_from_dict  # noqa: E402
-from schedprobe.evidence import read_records  # noqa: E402
-from schedprobe.frontier import CostLedger, Frontier  # noqa: E402
-from schedprobe.models import ProbeResult  # noqa: E402
-from schedprobe.planners import build_planner  # noqa: E402
+from schedprobe.config import config_from_dict
+from schedprobe.evidence import read_records
+from schedprobe.frontier import CostLedger, Frontier
+from schedprobe.models import ProbeResult
+from schedprobe.planners import build_planner
 
 
 def _pair(key: str) -> tuple[str, int]:
@@ -49,7 +49,7 @@ def main(path: str) -> int:
         peeked = planner.peek()
         extra_keys = data.get("extra_dispatched") or []
         snapshot_before = frontier.snapshot()
-        took, extra_pairs = frontier.admit(
+        _took, extra_pairs = frontier.admit(
             wanted, dispatched=bool(data.get("decision_dispatched", True)), extra=extra_keys
         )
         snapshot_after = frontier.snapshot()

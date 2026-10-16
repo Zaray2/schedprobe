@@ -25,8 +25,9 @@ import json
 import os
 import sys
 import traceback
+from collections.abc import Awaitable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Awaitable, Iterable, Mapping, Sequence, TypeVar
+from typing import Any, TypeVar
 
 from ..errors import (
     BackendError,
@@ -39,20 +40,20 @@ from ..errors import (
 )
 
 __all__ = [
-    "EXIT_OK",
-    "EXIT_INTERNAL",
-    "EXIT_USAGE",
+    "ASCII_FALLBACK_GLYPHS",
     "EXIT_EVIDENCE",
+    "EXIT_INTERNAL",
+    "EXIT_INTERRUPTED",
+    "EXIT_OK",
     "EXIT_REPLAY",
     "EXIT_UNAVAILABLE",
-    "EXIT_INTERRUPTED",
+    "EXIT_USAGE",
     "Emitter",
-    "run_async",
+    "configure_stdio",
+    "env_default",  # embedding API
     "exit_code_for",
     "read_json_file",  # embedding API
-    "env_default",  # embedding API
-    "configure_stdio",
-    "ASCII_FALLBACK_GLYPHS",
+    "run_async",
 ]
 
 EXIT_OK = 0
@@ -67,9 +68,9 @@ EXIT_INTERRUPTED = 130
 # always are). When stdout cannot represent them we substitute these instead of
 # letting Python raise UnicodeEncodeError or silently print '?'.
 ASCII_FALLBACK_GLYPHS: dict[str, str] = {
-    "\u2014": "--",   # em dash
-    "\u2013": "-",    # en dash
-    "\u00b7": "-",    # middle dot
+    "\u2014": "--",  # em dash
+    "\u2013": "-",  # en dash
+    "\u00b7": "-",  # middle dot
     "\u2265": ">=",
     "\u2264": "<=",
     "\u2026": "...",
@@ -101,6 +102,7 @@ def configure_stdio() -> str:
                 pass
         encoding = getattr(stream, "encoding", None) or "ascii"
     return encoding
+
 
 T = TypeVar("T")
 
@@ -159,15 +161,15 @@ def run_async(coro: Awaitable[T]) -> T:
     try:
         return asyncio.run(_wrap())
     except KeyboardInterrupt as exc:  # pragma: no cover - depends on a real console
-        raise _Interrupted() from exc
+        raise RunInterruptedError() from exc
 
 
-class _Interrupted(Exception):
-    pass
+class RunInterruptedError(Exception):
+    """Raised when the operator interrupts a run; mapped to exit code 130."""
 
 
 def exit_code_for(exc: BaseException) -> int:
-    if isinstance(exc, _Interrupted):
+    if isinstance(exc, RunInterruptedError):
         return EXIT_INTERRUPTED
     if isinstance(exc, EvidenceError):
         return EXIT_EVIDENCE
@@ -180,7 +182,7 @@ def exit_code_for(exc: BaseException) -> int:
 
 def read_json_file(path: str | os.PathLike[str]) -> Any:
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             return json.load(handle)
     except FileNotFoundError as exc:
         raise ConfigError("file not found", path=str(path)) from exc

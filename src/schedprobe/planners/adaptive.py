@@ -30,12 +30,16 @@ the seed only shapes the initial order in the ``random`` baseline.
 from __future__ import annotations
 
 import random
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..models import PortState, ProbeResult
 from .base import LiveSetChange, Pair, Planner, RankUpdate
 
-__all__ = ["AdaptivePlanner", "FixedOrderPlanner", "RandomOrderPlanner", "FixedLongTimeoutPlanner"]
+if TYPE_CHECKING:
+    from ..config import PlannerConfig
+
+__all__ = ["AdaptivePlanner", "FixedLongTimeoutPlanner", "FixedOrderPlanner", "RandomOrderPlanner"]
 
 
 class AdaptivePlanner(Planner):
@@ -43,7 +47,7 @@ class AdaptivePlanner(Planner):
 
     name = "adaptive"
 
-    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config) -> None:
+    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config: PlannerConfig) -> None:
         super().__init__(hosts, ports, config)
         self._donated = 0
         self._alive = True
@@ -184,10 +188,9 @@ class AdaptivePlanner(Planner):
         drop_ratio = (state.filtered_count / probeable) if probeable else 0.0
         surprising = answered > 0 and drop_ratio < getattr(self.config, "confirm_max_drop_ratio", 0.5)
         if (
-            (result.state is PortState.UNDETERMINED
-             or result.confidence < getattr(self.config, "confidence_threshold", 0.7))
-            and surprising
-        ):
+            result.state is PortState.UNDETERMINED
+            or result.confidence < getattr(self.config, "confidence_threshold", 0.7)
+        ) and surprising:
             pair = (result.host, result.port)
             if self._confirmation_budget_available(pair):
                 previous = self._live.get(pair)
@@ -278,7 +281,7 @@ class FixedOrderPlanner(Planner):
 
     name = "fixed"
 
-    def __init__(self, hosts, ports, config) -> None:
+    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config: PlannerConfig) -> None:
         super().__init__(hosts, ports, config)
         # Precomputed indices: ``list.index`` inside ``score`` is O(n) and ``score`` is
         # called once per pair per observation.
@@ -308,7 +311,7 @@ class RandomOrderPlanner(Planner):
 
     name = "random"
 
-    def __init__(self, hosts, ports, config) -> None:
+    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config: PlannerConfig) -> None:
         super().__init__(hosts, ports, config)
         self._order: dict[Pair, int] = {}
 
@@ -339,7 +342,7 @@ class FixedLongTimeoutPlanner(Planner):
 
     name = "fixed-longtimeout"
 
-    def __init__(self, hosts, ports, config) -> None:
+    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config: PlannerConfig) -> None:
         super().__init__(hosts, ports, config)
         self._host_index = {host: index for index, host in enumerate(self.hosts)}
         self._port_index = {port: index for index, port in enumerate(self.ports)}

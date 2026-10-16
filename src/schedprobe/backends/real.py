@@ -22,7 +22,9 @@ import asyncio
 import errno
 import socket
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from contextlib import suppress
+from typing import Any
 
 from ..errors import BackendError
 from ..models import PortState, ProbeResult, Verdict
@@ -109,7 +111,7 @@ class RealTcpBackend(ScopedProbeBackend):
                 asyncio.open_connection(host=resolved, port=request.port), timeout=timeout
             )
             return PortState.OPEN, Verdict.CONNECTED, "tcp handshake completed"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return PortState.FILTERED, Verdict.TIMEOUT, f"no response within {timeout:.3f}s"
         except ConnectionRefusedError:
             return PortState.CLOSED, Verdict.REFUSED, "connection refused"
@@ -119,10 +121,8 @@ class RealTcpBackend(ScopedProbeBackend):
             return self._classify_oserror(exc, timeout)
         finally:
             if writer is not None:
-                try:
+                with suppress(OSError):
                     writer.close()
-                except OSError:
-                    pass
 
     def _classify_oserror(self, exc: OSError, timeout: float) -> tuple[PortState, Verdict, str]:
         """Map OS errors without guessing.
@@ -157,7 +157,7 @@ class RealTcpBackend(ScopedProbeBackend):
         except OSError:
             pass
         try:
-            socket.inet_pton(socket.AF_INET6, host.split("%")[0])
+            socket.inet_pton(socket.AF_INET6, host.split("%", maxsplit=1)[0])
             return host
         except OSError:
             pass
@@ -170,13 +170,14 @@ class RealTcpBackend(ScopedProbeBackend):
                 infos = await asyncio.wait_for(
                     loop.getaddrinfo(host, None, type=socket.SOCK_STREAM), timeout=self.resolve_timeout
                 )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise _ResolutionError("timed out") from exc
             except socket.gaierror as exc:
                 raise _ResolutionError(f"{exc.__class__.__name__}") from exc
             if not infos:
                 raise _ResolutionError("no addresses")
-            resolved = infos[0][4][0]
+            # sockaddr[0] is the address text for both AF_INET and AF_INET6.
+            resolved = str(infos[0][4][0])
             self._dns_cache[host] = resolved
             return resolved
 
@@ -188,17 +189,15 @@ class RealTcpBackend(ScopedProbeBackend):
                 asyncio.open_connection(host=request.host, port=request.port),
                 timeout=min(request.effective_timeout_s, 1.0),
             )
-        except (OSError, asyncio.TimeoutError):
+        except (TimeoutError, OSError):
             return ""
         try:
             raw = await asyncio.wait_for(reader.read(_BANNER_BYTE_CAP), timeout=0.4)
-        except (OSError, asyncio.TimeoutError):
+        except (TimeoutError, OSError):
             raw = b""
         finally:
-            try:
+            with suppress(OSError):
                 writer.close()
-            except OSError:
-                pass
         return _sanitize_banner(raw)
 
     def describe(self) -> dict[str, Any]:

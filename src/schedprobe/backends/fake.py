@@ -21,16 +21,17 @@ Everything is integer-exact and reproducible: see ``tests/test_engine.py`` (``Te
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from ..errors import BackendError
 from ..models import PortState, ProbeResult, Verdict
 from ..util import derive_rng
 from .base import ProbeRequest, ScopedProbeBackend, confidence_for, merge_stats
 
-__all__ = ["FakeBackend", "NetworkScenario", "scenario_from_dict", "load_scenario", "builtin_scenarios"]
+__all__ = ["FakeBackend", "NetworkScenario", "builtin_scenarios", "load_scenario", "scenario_from_dict"]
 
 
 @dataclass(slots=True)
@@ -73,6 +74,7 @@ class NetworkScenario:
             for port in ports:
                 truth[(host, port)] = self.resolve(host, port)
         return truth
+
 
 def scenario_from_dict(payload: Mapping[str, Any]) -> NetworkScenario:
     if not isinstance(payload, Mapping):
@@ -129,12 +131,12 @@ def builtin_scenarios() -> dict[str, NetworkScenario]:
 
     Written as data so a reader can see the exact world the numbers came from.
     """
-    ranked = [22, 80, 443, 3306, 6379, 8080, 8443]
-    wide = list(range(1, 1025))
 
     def host(open_ports: Iterable[int], default: PortState, **extra: Any) -> dict[str, Any]:
-        rules: dict[str, Any] = {"ports": {str(p): PortState.OPEN.value for p in open_ports},
-                                 "default": default.value}
+        rules: dict[str, Any] = {
+            "ports": {str(p): PortState.OPEN.value for p in open_ports},
+            "default": default.value,
+        }
         rules.update(extra)
         return rules
 
@@ -145,15 +147,12 @@ def builtin_scenarios() -> dict[str, NetworkScenario]:
     }
     # A segment that has nothing listening: an /24 full of dropped packets is the
     # pathological case the adaptive planner is built for.
-    blackhole = {
-        f"10.0.20.{i}": {"unreachable": True} for i in range(2, 14)
-    }
+    blackhole = {f"10.0.20.{i}": {"unreachable": True} for i in range(2, 14)}
     # A large segment that is *heavily filtered* but not dead. No policy can find
     # the open ports cheaply, but a good one should stop paying for the drop after
     # a few attempts and spend the rest of the budget elsewhere.
     segmented_filtered = {
-        f"10.0.40.{i}": host([22, 443] if i == 5 else [], PortState.FILTERED)
-        for i in range(2, 14)
+        f"10.0.40.{i}": host([22, 443] if i == 5 else [], PortState.FILTERED) for i in range(2, 14)
     }
     mixed = dict(healthy)
     mixed.update(blackhole)
@@ -180,10 +179,7 @@ def builtin_scenarios() -> dict[str, NetworkScenario]:
             name="segmented-filtered",
             hosts=dict(mixed) | dict(segmented_filtered),
             latency_ms=(1, 6),
-            description=(
-                "adds a twelve-host /24 that is mostly filtered with two open ports "
-                "on one host"
-            ),
+            description=("adds a twelve-host /24 that is mostly filtered with two open ports on one host"),
         ),
         "segmented-sweep": NetworkScenario(
             name="segmented-sweep",

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from ..errors import ConfigError
 from .adaptive import (
@@ -21,20 +22,23 @@ from .base import (
     pair_key,
 )
 
+if TYPE_CHECKING:
+    from ..config import PlannerConfig
+
 __all__ = [
+    "PLANNER_CLASSES",
     "AdaptivePlanner",
     "FixedLongTimeoutPlanner",
     "FixedOrderPlanner",
-    "RandomOrderPlanner",
-    "Planner",
-    "SegmentBook",
-    "RttTracker",
-    "ProbePlan",
-    "RankUpdate",
     "LiveSetChange",
-    "pair_key",
-    "PLANNER_CLASSES",
+    "Planner",
+    "ProbePlan",
+    "RandomOrderPlanner",
+    "RankUpdate",
+    "RttTracker",
+    "SegmentBook",
     "build_planner",
+    "pair_key",
 ]
 
 PLANNER_CLASSES: dict[str, type[Planner]] = {
@@ -45,12 +49,10 @@ PLANNER_CLASSES: dict[str, type[Planner]] = {
 }
 
 
-def build_planner(kind: str, hosts: Sequence[str], ports: Sequence[int], config) -> Planner:
+def build_planner(kind: str, hosts: Sequence[str], ports: Sequence[int], config: PlannerConfig) -> Planner:
     """Instantiate a planner by name from a validated config."""
     try:
         cls = PLANNER_CLASSES[kind]
     except KeyError as exc:
-        raise ConfigError(
-            "unknown planner", kind=kind, known=sorted(PLANNER_CLASSES)
-        ) from exc
+        raise ConfigError("unknown planner", kind=kind, known=sorted(PLANNER_CLASSES)) from exc
     return cls(hosts, ports, config)

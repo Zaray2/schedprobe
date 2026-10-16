@@ -13,10 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from schedprobe.config import config_from_dict  # noqa: E402
-from schedprobe.evidence import read_records  # noqa: E402
-from schedprobe.models import ProbeResult  # noqa: E402
-from schedprobe.planners import build_planner  # noqa: E402
+from schedprobe.config import config_from_dict
+from schedprobe.evidence import read_records
+from schedprobe.models import ProbeResult
+from schedprobe.planners import build_planner
 
 
 def main(path: str) -> int:
@@ -46,8 +46,11 @@ def main(path: str) -> int:
             peeked = planner.peek()
             want = (str(nxt["host"]), int(nxt["port"]))
             marker = "OK " if peeked == want else "DIF"
-            print(f"      next recorded={want} peeked={peeked} [{marker}]"
-                  f" recorded_prio={nxt['priority']} peeked_prio={planner.score(*peeked) if peeked else None}")
+            peeked_score = planner.score(*peeked) if peeked else None
+            print(
+                f"      next recorded={want} peeked={peeked} [{marker}]"
+                f" recorded_prio={nxt['priority']} peeked_prio={peeked_score}"
+            )
     return 0
 
 

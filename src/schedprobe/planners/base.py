@@ -15,20 +15,24 @@ meaningful operation instead of a re-scan.
 from __future__ import annotations
 
 import heapq
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..models import ProbeResult, SegmentState, Verdict, segment_of
+from ..targets import segment_map
 from ..util import get_logger
 
+if TYPE_CHECKING:
+    from ..config import PlannerConfig
+
 log = get_logger("schedprobe.planner")
-from ..targets import segment_map
 
 __all__ = [
-    "RankUpdate",
     "LiveSetChange",
     "Planner",
     "ProbePlan",
+    "RankUpdate",
     "RttTracker",
     "SegmentBook",
     "pair_key",
@@ -169,7 +173,13 @@ class RttTracker:
     estimator is deterministic: no clocks, only arithmetic on observed costs.
     """
 
-    def __init__(self, base_timeout_s: float, minimum_s: float, maximum_s: float, alpha: float = 0.4) -> None:
+    def __init__(
+        self,
+        base_timeout_s: float,
+        minimum_s: float,
+        maximum_s: float,
+        alpha: float = 0.4,
+    ) -> None:
         if not 0.0 < alpha <= 1.0:
             raise ValueError("alpha must be in (0, 1]")
         self.base = float(base_timeout_s)
@@ -199,7 +209,8 @@ class RttTracker:
             current = self._current.get(host, self.base)
             # Shrink faster than we grow: a healthy host should not keep paying for
             # one early timeout.
-            self._current[host] = self._clamp(min(current, target) if current > target else current * 0.95 + target * 0.05)
+            shrunk = current * 0.95 + target * 0.05
+            self._current[host] = self._clamp(min(current, target) if current > target else shrunk)
         else:
             current = self._current.get(host, self.base)
             self._current[host] = self._clamp(current * 1.6)
@@ -225,7 +236,7 @@ class Planner:
 
     name = "base"
 
-    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config) -> None:
+    def __init__(self, hosts: Sequence[str], ports: Sequence[int], config: PlannerConfig) -> None:
         self.hosts = tuple(hosts)
         self.ports = tuple(ports)
         self.config = config
@@ -329,8 +340,12 @@ class Planner:
             log.warning(
                 "frontier order violation: peek returned %s score=%s but the live minimum is "
                 "%s score=%s (live=%s, heap=%s)",
-                returned, self._live.get(returned), true_min[0], true_min[1],
-                len(self._live), len(self._heap),
+                returned,
+                self._live.get(returned),
+                true_min[0],
+                true_min[1],
+                len(self._live),
+                len(self._heap),
             )
 
     def peek(self) -> Pair | None:
@@ -453,6 +468,7 @@ class Planner:
             self.rtt.observe(result.host, responded=True, cost_s=max(0.001, cost_s))
         else:
             self.rtt.observe(result.host, responded=False, cost_s=0.0)
+
     def _confirmation_budget_available(self, pair: Pair) -> bool:
         """True while the pair is still allowed another confirmation attempt.
 

@@ -17,21 +17,24 @@ The engine is intentionally thin. It owns three things and nothing else:
 from __future__ import annotations
 
 import asyncio
+import heapq
 import os
+import platform
+import sys
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from .backends.base import (
     Backend,
-    BackendStats,
     ProbeRequest,
     build_backend,
 )
-from .config import ScanConfig
-from .errors import BackendError, BudgetError, SchedProbeError
+from .config import PlannerConfig, ScanConfig
+from .errors import BackendError, SchedProbeError
 from .evidence import (
     DEFAULT_FILENAME,
     EvidenceLog,
@@ -40,12 +43,13 @@ from .evidence import (
     verify_chain,
     write_manifest,
 )
-from .models import PortState, ProbeResult, SegmentState, Verdict
-from .planners import PLANNER_CLASSES, Planner, build_planner
+from .models import PortState, ProbeResult, Verdict
+from .planners import Planner, build_planner
+from .planners.base import LiveSetChange, Pair, ProbePlan, RankUpdate
 from .targets import expand_targets
 from .util import get_logger, hash_pair
 
-__all__ = ["ScanEngine", "ScanRun", "RunSummary"]
+__all__ = ["RunSummary", "ScanEngine", "ScanRun"]
 
 log = get_logger("schedprobe.engine")
 
@@ -161,7 +165,7 @@ class ScanRun:
         return hash_pair(host, 0, salt=self.run_id)
 
 
-def _budget_slot(cfg: ScanConfig, planner_cfg) -> int:
+def _budget_slot(cfg: ScanConfig, planner_cfg: PlannerConfig) -> int:
     """Budget slot charged when a probe starts (see ``PlannerConfig.budget_slot_ms``).
 
     A constant rather than the probe timeout, so the budget rule is a pure integer
@@ -178,7 +182,7 @@ def _budget_slot(cfg: ScanConfig, planner_cfg) -> int:
 class ScanEngine:
     """Drive a planner/backend pair and persist an auditable record of the run."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - five optional knobs, all keyword-only
         self,
         config: ScanConfig,
         *,
@@ -325,7 +329,7 @@ class ScanEngine:
                 },
             )
 
-            async def dispatch(pair, slot: int, provision, attempt: int) -> None:
+            async def dispatch(pair: Pair, slot: int, provision: ProbePlan, attempt: int) -> None:
                 """Probe one pair and buffer the observation for ordered commit.
 
                 The probe is issued under a *provisional* plan; the plan of record is
@@ -434,7 +438,7 @@ class ScanEngine:
                         inflight_snapshot=sorted(f"{h}:{p}" for h, p in reserved),
                     )
 
-            def _peek_plan():
+            def _peek_plan() -> ProbePlan | None:
                 """Plan the next pair without dispatching it (decision of record)."""
                 pair = planner.peek()
                 return planner.plan_next(pair) if pair is not None else None
@@ -445,18 +449,16 @@ class ScanEngine:
                 Implemented by copying the heap and skipping taken entries; it never
                 mutates the planner, so it cannot perturb the schedule it describes.
                 """
-                import heapq as _heapq
-
-                heap = list(planner._heap)  # noqa: SLF001 - diagnostic view, documented
-                _heapq.heapify(heap)
+                heap = list(planner._heap)
+                heapq.heapify(heap)
                 seen: set[tuple[str, int]] = set()
                 out: list[dict[str, Any]] = []
                 while heap and len(out) < limit:
-                    _score, _tick, candidate = _heapq.heappop(heap)
+                    _score, _tick, candidate = heapq.heappop(heap)
                     if candidate in seen:
                         continue
                     seen.add(candidate)
-                    live_score = planner._live.get(candidate)  # noqa: SLF001
+                    live_score = planner._live.get(candidate)
                     if live_score is None:
                         continue
                     out.append(
@@ -470,7 +472,7 @@ class ScanEngine:
             def _reservation_slot() -> int:
                 return _budget_slot(cfg, planner_cfg)
 
-            def _reserve_and_check(plan, charged: int, *, bypass_cap: bool = False) -> int:
+            def _reserve_and_check(plan: ProbePlan, charged: int, *, bypass_cap: bool = False) -> int:
                 """Reserve the worst-case cost of ``plan`` if it fits the budget.
 
                 Returns the worst-case lease that was considered (0 when the plan could
@@ -493,8 +495,12 @@ class ScanEngine:
                     stop_reason[0] = "no-headroom"
                     log.debug(
                         "no head-room for %s:%s (spent=%s reserved=%s need=%s budget=%s)",
-                        plan.host, plan.port, cost_spent, sum(reserved.values()),
-                        worst_case, budget,
+                        plan.host,
+                        plan.port,
+                        cost_spent,
+                        sum(reserved.values()),
+                        worst_case,
+                        budget,
                     )
                     return worst_case  # 0 would lose the number the verifier needs
                 pair = (plan.host, plan.port)
@@ -549,7 +555,9 @@ class ScanEngine:
                 share = max(1, cfg.network.concurrency // remaining)
                 return max(1, min(share, cfg.network.concurrency, max(1, len(planner.live_pairs()))))
 
-            def _dispatch_pair(plan, *, charged: int = 0, bypass_cap: bool = False) -> tuple[int, bool]:
+            def _dispatch_pair(
+                plan: ProbePlan | None, *, charged: int = 0, bypass_cap: bool = False
+            ) -> tuple[int, bool]:
                 """Take a planned pair and start its probe.
 
                 Returns ``(lease_ms, dispatched)``. The lease is reported even when the
@@ -620,21 +628,37 @@ class ScanEngine:
                     if watch and pair in watch:
                         log.debug(
                             "top-up head %s:%s score=%s (%s)",
-                            pair[0], pair[1], planner.score(*pair), where,
+                            pair[0],
+                            pair[1],
+                            planner.score(*pair),
+                            where,
                         )
                     lease, ok = _dispatch_pair(planner.plan_next(pair))
                     if not ok:
                         log.debug(
-                            "top-up stopped: admitted=%s cap=%s in_flight=%s reserved=%s spent=%s budget=%s",
-                            len(admitted), cap, len(inflight), sum(reserved.values()),
-                            cost_spent, budget,
+                            "top-up stopped: admitted=%s cap=%s in_flight=%s "
+                            "reserved=%s spent=%s budget=%s",
+                            len(admitted),
+                            cap,
+                            len(inflight),
+                            sum(reserved.values()),
+                            cost_spent,
+                            budget,
                         )
                         return admitted
                     admitted.append((pair, lease))
 
-            def _record_probe(
-                *, paired, updates, changes, decision, dispatched, extra, wave_cap, lease_ms,
-                inflight_snapshot,
+            def _record_probe(  # noqa: PLR0913 - one record, one call site, all names required
+                *,
+                paired: tuple[Pair, ProbeResult, ProbePlan, int, float],
+                updates: list[RankUpdate],
+                changes: list[LiveSetChange],
+                decision: ProbePlan | None,
+                dispatched: bool,
+                extra: list[tuple[Pair, int]],
+                wave_cap: int,
+                lease_ms: int,
+                inflight_snapshot: list[str],
             ) -> None:
                 pair, result, provision, attempt, executed_timeout = paired
                 if logfile.closed:  # pragma: no cover - only reachable after an aborted run
@@ -743,16 +767,18 @@ class ScanEngine:
                         # lets the verifier adopt the exact state instead of guessing at
                         # how many waves ran.
                         "in_flight": sorted(f"{h}:{p}" for h, p in reserved),
-                        "leases": {
-                            f"{h}:{p}": units for (h, p), units in sorted(reserved.items())
-                        },
+                        "leases": {f"{h}:{p}": units for (h, p), units in sorted(reserved.items())},
                     },
                 )
                 while True:
                     if self._cancelled:
                         logfile.append(
                             "cancelled",
-                            {"cost_spent": cost_spent, "in_flight": len(inflight), "reserved": len(reserved)},
+                            {
+                                "cost_spent": cost_spent,
+                                "in_flight": len(inflight),
+                                "reserved": len(reserved),
+                            },
                         )
                         break
                     if not inflight:
@@ -761,12 +787,13 @@ class ScanEngine:
                         logfile.append(
                             "budget-stop",
                             {
-                                "reason": stop_reason[0] or ("work-remaining" if remaining else "frontier-empty"),
+                                "reason": stop_reason[0]
+                                or ("work-remaining" if remaining else "frontier-empty"),
                                 "cost_spent": cost_spent,
                                 "budget": budget,
                                 "allowance": budget if confirmation_phase[0] else sweep_allowance,
                                 "reserved_allowance": reserved_allowance,
-                    "sweep_allowance": sweep_allowance,
+                                "sweep_allowance": sweep_allowance,
                                 "work_remaining": remaining,
                             },
                         )
@@ -872,7 +899,7 @@ class ScanEngine:
         self._cancelled = True
 
 
-def _fill_summary(
+def _fill_summary(  # noqa: PLR0913, PLR0917 - explicit state beats a mutable bag here
     summary: RunSummary,
     results: dict[tuple[str, int], ProbeResult],
     planner: Planner,
@@ -913,7 +940,7 @@ def _safe_argv() -> list[str]:
 
     The CLI never takes secrets, but a user could always paste one by accident.
     """
-    argv = list(os.sys.argv[1:])
+    argv = list(sys.argv[1:])
     filtered: list[str] = []
     skip_next = False
     for item in argv:
@@ -934,6 +961,4 @@ def _safe_argv() -> list[str]:
 
 
 def _python_version() -> str:
-    import platform
-
     return platform.python_version()

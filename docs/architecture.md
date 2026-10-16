@@ -217,7 +217,7 @@ cost_spent + sum(reserved.values()) - charged + _reservation_slot() <= budget
 
 ```python
 class MyPlanner(Planner):
-    name = "my-planner"                      # 唯一名字；PLANNER_CLASSES 的键
+    name = "my-planner"  # 唯一名字；PLANNER_CLASSES 的键
 
     def plan(self) -> list[tuple[str, int]]:
         """返回全量在范围内 pair 的确定性初始顺序。"""
@@ -234,8 +234,9 @@ def observe(self, result: ProbeResult) -> tuple[list[RankUpdate], list[LiveSetCh
     必须自己调用 self.book.observe(result) 与 self._note_rtt(result)，
     并让 self.generation += 1（参考 AdaptivePlanner.observe 的实现）。"""
 
-def timeout_for(self, pair: tuple[str, int]) -> float: ...   # 默认返回 rtt.current(host)
-def initial_reason(self) -> str: ...                          # 初始 reason 标记
+
+def timeout_for(self, pair: tuple[str, int]) -> float: ...  # 默认返回 rtt.current(host)
+def initial_reason(self) -> str: ...  # 初始 reason 标记
 ```
 
 注册与启用（三处，缺一不可）：
@@ -253,8 +254,8 @@ def initial_reason(self) -> str: ...                          # 初始 reason �
 
 ```python
 class Backend(Protocol):
-    name: str          # 写入 run-header / manifest
-    cost_unit: str     # 成本单位字符串，如 "ms"
+    name: str  # 写入 run-header / manifest
+    cost_unit: str  # 成本单位字符串，如 "ms"
 
     async def setup(self) -> None: ...
     async def probe(self, request: ProbeRequest) -> ProbeResult: ...

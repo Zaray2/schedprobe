@@ -14,26 +14,26 @@ These are the tests that matter most, because they pin the three claims the proj
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from schedprobe.backends.base import ProbeRequest
 from schedprobe.backends.fake import FakeBackend, NetworkScenario, builtin_scenarios
 from schedprobe.config import NetworkConfig, PlannerConfig, ScanConfig
 from schedprobe.engine import ScanEngine
 from schedprobe.errors import BackendError, ConfigError, EvidenceError
-from schedprobe.evidence import read_records
+from schedprobe.evidence import file_digest, read_records, verify_chain
 from schedprobe.frontier import CostLedger, Frontier
-from schedprobe.models import PortState, ProbeResult, Verdict, segment_of
+from schedprobe.models import PortState, ProbeResult, SegmentState, Verdict
 from schedprobe.planners import (
     AdaptivePlanner,
-    FixedLongTimeoutPlanner,
-    FixedOrderPlanner,
-    RandomOrderPlanner,
     build_planner,
 )
 from schedprobe.planners.base import ProbePlan, RttTracker, SegmentBook
 from schedprobe.replay import replay_chain
+from schedprobe.util import canonical_json, sha256_hex
 
 
 def _config(hosts, ports, *, kind="adaptive", budget=50000, seed=1337, **planner_kwargs) -> ScanConfig:
@@ -66,10 +66,21 @@ def _run(config: ScanConfig, scenario: NetworkScenario | None = None, out_dir: s
     return asyncio.run(engine.run())
 
 
-def _result(host: str, port: int, state: PortState, verdict: Verdict, confidence: float = 0.9) -> ProbeResult:
+def _result(
+    host: str,
+    port: int,
+    state: PortState,
+    verdict: Verdict,
+    confidence: float = 0.9,
+) -> ProbeResult:
     return ProbeResult(
-        host=host, port=port, state=state, verdict=verdict,
-        cost_units=10, confidence=confidence, attempt=1,
+        host=host,
+        port=port,
+        state=state,
+        verdict=verdict,
+        cost_units=10,
+        confidence=confidence,
+        attempt=1,
     )
 
 
@@ -120,8 +131,6 @@ class TestHealthScore(unittest.TestCase):
     """
 
     def _state(self, *, ports=(80, 443), **kwargs):
-        from schedprobe.models import SegmentState
-
         return SegmentState(segment="10.0.0.0/24", ports=tuple(ports), **kwargs)
 
     def test_untested_segment_is_neutral_apart_from_coverage(self) -> None:
@@ -262,7 +271,10 @@ class TestAdaptivePolicy(unittest.TestCase):
     def test_defer_mode_keeps_the_pairs_probeable(self) -> None:
         hosts = ["10.0.9.1", "10.0.9.2"]
         planner = self._adaptive(
-            hosts, (80, 443), prune_after_consecutive_timeouts=1, prune_min_planned=1,
+            hosts,
+            (80, 443),
+            prune_after_consecutive_timeouts=1,
+            prune_min_planned=1,
             prune_mode="defer",
         )
         planner.take((hosts[0], 80))
@@ -275,7 +287,10 @@ class TestAdaptivePolicy(unittest.TestCase):
     def test_drop_mode_removes_the_pairs(self) -> None:
         hosts = ["10.0.9.1", "10.0.9.2"]
         planner = self._adaptive(
-            hosts, (80, 443), prune_after_consecutive_timeouts=1, prune_min_planned=1,
+            hosts,
+            (80, 443),
+            prune_after_consecutive_timeouts=1,
+            prune_min_planned=1,
             prune_mode="drop",
         )
         planner.take((hosts[0], 80))
@@ -285,8 +300,10 @@ class TestAdaptivePolicy(unittest.TestCase):
     def test_deferred_segment_scores_worse_than_any_live_one(self) -> None:
         dead_host, live_host = "10.0.9.1", "10.0.8.1"
         planner = self._adaptive(
-            [dead_host, live_host], (80, 443),
-            prune_after_consecutive_timeouts=1, prune_min_planned=1,
+            [dead_host, live_host],
+            (80, 443),
+            prune_after_consecutive_timeouts=1,
+            prune_min_planned=1,
         )
         planner.take((dead_host, 80))
         planner.observe(_result(dead_host, 80, PortState.FILTERED, Verdict.TIMEOUT, 0.45))
@@ -298,9 +315,7 @@ class TestAdaptivePolicy(unittest.TestCase):
         # another timeout would not be informative - see the confirmation gate.)
         self.assertEqual(planner.peek(), (live_host, 80))
         self.assertIn((dead_host, 443), planner.live_pairs())
-        self.assertGreater(
-            planner.base_score(dead_host, 443), planner.base_score(live_host, 80)
-        )
+        self.assertGreater(planner.base_score(dead_host, 443), planner.base_score(live_host, 80))
         self.assertLess(planner.base_score(live_host, 80), planner.base_score(dead_host, 80))
 
     def test_confirmation_is_bounded(self) -> None:
@@ -318,8 +333,9 @@ class TestAdaptivePolicy(unittest.TestCase):
 
     def test_confirmation_uses_a_longer_timeout(self) -> None:
         hosts = ["10.0.0.1"]
-        planner = self._adaptive(hosts, (80, 443, 3306, 8080),
-                                 confirm_timeout_multiplier=2.5, confidence_threshold=0.9)
+        planner = self._adaptive(
+            hosts, (80, 443, 3306, 8080), confirm_timeout_multiplier=2.5, confidence_threshold=0.9
+        )
         pair = (hosts[0], 8080)
         # Two promptly-answered probes first: the confirmation gate only retries where a
         # timeout contradicts the segment's established pattern.
@@ -384,8 +400,13 @@ class TestAdaptivePolicy(unittest.TestCase):
         self.assertIn("confirmation", payload)
 
     def test_mark_heap_dirty_is_cleared_by_reheap(self) -> None:
-        planner = self._adaptive(["10.0.0.1", "10.0.1.1"], (80, 443), prune_mode="drop",
-                                 prune_after_consecutive_timeouts=1, prune_min_planned=1)
+        planner = self._adaptive(
+            ["10.0.0.1", "10.0.1.1"],
+            (80, 443),
+            prune_mode="drop",
+            prune_after_consecutive_timeouts=1,
+            prune_min_planned=1,
+        )
         planner.take(("10.0.0.1", 80))
         planner.observe(_result("10.0.0.1", 80, PortState.FILTERED, Verdict.TIMEOUT, 0.45))
         # ``peek`` rebuilds when dirty; the invariant check must then agree with it.
@@ -543,11 +564,15 @@ class TestDeterminism(unittest.TestCase):
             if record.kind == "probe":
                 decision = record.data.get("decision")
                 dispatched = record.data["dispatched"]
-                rows.append((
-                    dispatched["host"], dispatched["port"], dispatched["reason"],
-                    decision and (decision["host"], decision["port"]),
-                    decision and round(float(decision["timeout_s"]), 6),
-                ))
+                rows.append(
+                    (
+                        dispatched["host"],
+                        dispatched["port"],
+                        dispatched["reason"],
+                        decision and (decision["host"], decision["port"]),
+                        decision and round(float(decision["timeout_s"]), 6),
+                    )
+                )
         return rows
 
     def test_two_identical_runs_make_identical_decisions(self) -> None:
@@ -583,10 +608,6 @@ class TestDeterminism(unittest.TestCase):
         lines = run.evidence_path.read_text(encoding="utf-8").splitlines()
         # Re-serialize one probe with a different observation cost, keeping the chain
         # digest consistent so only the *schedule* looks wrong.
-        import json
-
-        from schedprobe.util import canonical_json, sha256_hex
-
         payload = json.loads(lines[4])
         payload["data"]["observation"]["cost_units"] = 123456
         body = {key: value for key, value in payload.items() if key != "hash"}
@@ -600,8 +621,6 @@ class TestDeterminism(unittest.TestCase):
             lines[index] = canonical_json(nxt)
             payload = nxt
         run.evidence_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-        from schedprobe.evidence import verify_chain
 
         self.assertTrue(verify_chain(run.evidence_path).ok, "chain is internally consistent")
         report = replay_chain(run.evidence_path)
@@ -639,7 +658,8 @@ class TestBudgetInvariant(unittest.TestCase):
                     committed = record.data["cost_spent"] + record.data["reserved_units"]
                     worst = max(worst, committed)
                     self.assertLessEqual(
-                        committed, record.data["budget"],
+                        committed,
+                        record.data["budget"],
                         f"seq {record.seq}: spent+reserved {committed} > budget {record.data['budget']}",
                     )
                 self.assertGreater(worst, 0)
@@ -654,9 +674,7 @@ class TestBudgetInvariant(unittest.TestCase):
                 for record in read_records(run.evidence_path):
                     if record.kind != "probe":
                         continue
-                    self.assertLessEqual(
-                        len(record.data["inflight_pairs"]), config.network.concurrency
-                    )
+                    self.assertLessEqual(len(record.data["inflight_pairs"]), config.network.concurrency)
 
     def test_summary_agrees_with_the_log(self) -> None:
         scenario = builtin_scenarios()["blackhole-segment"]
@@ -674,8 +692,9 @@ class TestBudgetInvariant(unittest.TestCase):
         run = _run(_config(hosts, tuple(range(1, 100)), budget=2000), scenario, self.dir)
         stops = [r for r in read_records(run.evidence_path) if r.kind == "budget-stop"]
         self.assertEqual(len(stops), 1)
-        self.assertIn(stops[0].data["reason"], {"no-headroom", "frontier-empty",
-                                                "work-remaining", "concurrency-cap"})
+        self.assertIn(
+            stops[0].data["reason"], {"no-headroom", "frontier-empty", "work-remaining", "concurrency-cap"}
+        )
 
 
 class TestEngineSafety(unittest.TestCase):
@@ -688,8 +707,6 @@ class TestEngineSafety(unittest.TestCase):
         scenario = builtin_scenarios()["healthy"]
         hosts = tuple(sorted(scenario.hosts))
         run = _run(_config(hosts, (22, 80, 443), budget=20000), scenario, self.dir)
-        import json
-
         manifest = json.loads(run.manifest_path.read_text(encoding="utf-8"))
         self.assertTrue(manifest["chain_verified"])
         kinds = [r.kind for r in read_records(run.evidence_path)]
@@ -698,16 +715,12 @@ class TestEngineSafety(unittest.TestCase):
         self.assertLessEqual(run.summary.pairs_touched, run.summary.dispatched)
         for expected in ("run-header", "config", "plan", "startup", "summary", "manifest"):
             self.assertIn(expected, kinds)
-        from schedprobe.evidence import file_digest
-
         self.assertEqual(manifest["evidence_sha256"], file_digest(run.evidence_path)[0])
         self.assertEqual(manifest["probe_errors"], [])
 
     def test_backend_scope_guard_refuses_unlisted_hosts(self) -> None:
         scenario = builtin_scenarios()["healthy"]
         backend = FakeBackend(scenario=scenario, allow=["10.0.10.5"], config=None)
-        from schedprobe.backends.base import ProbeRequest
-
         with self.assertRaises(BackendError):
             asyncio.run(backend.probe(ProbeRequest(host="10.0.10.6", port=22, timeout_s=0.1)))
 
@@ -715,10 +728,12 @@ class TestEngineSafety(unittest.TestCase):
         scenario = builtin_scenarios()["healthy"]
         hosts = tuple(sorted(scenario.hosts))
         config = _config(hosts, (22,), budget=20000)
-        first = ScanEngine(config, backend=FakeBackend(scenario, allow=list(hosts), config=config),
-                           out_dir=self.dir)
-        second = ScanEngine(config, backend=FakeBackend(scenario, allow=list(hosts), config=config),
-                            out_dir=self.dir)
+        first = ScanEngine(
+            config, backend=FakeBackend(scenario, allow=list(hosts), config=config), out_dir=self.dir
+        )
+        second = ScanEngine(
+            config, backend=FakeBackend(scenario, allow=list(hosts), config=config), out_dir=self.dir
+        )
         self.assertNotEqual(first.run_id, second.run_id)
 
     def test_unknown_scenario_is_rejected(self) -> None:
@@ -729,8 +744,9 @@ class TestEngineSafety(unittest.TestCase):
         scenario = builtin_scenarios()["healthy"]
         hosts = tuple(sorted(scenario.hosts))
         config = _config(hosts, (22, 80), budget=20000)
-        engine = ScanEngine(config, backend=FakeBackend(scenario, allow=list(hosts), config=config),
-                            out_dir=self.dir)
+        engine = ScanEngine(
+            config, backend=FakeBackend(scenario, allow=list(hosts), config=config), out_dir=self.dir
+        )
         engine.cancel()
         run = asyncio.run(engine.run())
         self.assertEqual(run.summary.dispatched, 0)
@@ -750,7 +766,6 @@ class TestBackendDeterminism(unittest.TestCase):
         scenario = builtin_scenarios()["blackhole-segment"]
         hosts = tuple(sorted(scenario.hosts))
         config = _config(hosts, (22, 80), budget=50000)
-        from schedprobe.backends.base import ProbeRequest
 
         async def probe_pair(host: str, port: int) -> int:
             backend = FakeBackend(scenario=scenario, allow=list(hosts), config=config)
@@ -765,8 +780,6 @@ class TestBackendDeterminism(unittest.TestCase):
     def test_unreachable_host_is_filtered(self) -> None:
         scenario = NetworkScenario(name="dead", hosts={"10.9.9.9": {"unreachable": True}})
         backend = FakeBackend(scenario=scenario, allow=["10.9.9.9"], config=None)
-        from schedprobe.backends.base import ProbeRequest
-
         result = asyncio.run(backend.probe(ProbeRequest(host="10.9.9.9", port=80, timeout_s=0.6)))
         self.assertEqual(result.state, PortState.FILTERED)
         self.assertEqual(result.verdict, Verdict.TIMEOUT)
@@ -774,8 +787,6 @@ class TestBackendDeterminism(unittest.TestCase):
     def test_unknown_host_is_undetermined_not_closed(self) -> None:
         scenario = NetworkScenario(name="empty", hosts={})
         backend = FakeBackend(scenario=scenario, allow=["10.9.9.9"], config=None)
-        from schedprobe.backends.base import ProbeRequest
-
         result = asyncio.run(backend.probe(ProbeRequest(host="10.9.9.9", port=80, timeout_s=0.6)))
         self.assertEqual(result.state, PortState.UNDETERMINED)
         self.assertEqual(result.verdict, Verdict.UNRESOLVED)
@@ -786,14 +797,11 @@ class TestBackendDeterminism(unittest.TestCase):
             hosts={"10.0.0.1": {"ports": {"80": "open", "81": "filtered"}, "default": "closed"}},
             loss_rate=0.5,
         )
-        from schedprobe.backends.base import ProbeRequest
-
         backend = FakeBackend(scenario=scenario, allow=["10.0.0.1"], config=None)
         states = set()
         for _ in range(20):
             for port in (80, 81):
-                result = asyncio.run(backend.probe(ProbeRequest(host="10.0.0.1", port=port,
-                                                                timeout_s=0.6)))
+                result = asyncio.run(backend.probe(ProbeRequest(host="10.0.0.1", port=port, timeout_s=0.6)))
                 states.add((port, result.state))
         # Port 81 is filtered by construction: loss must never turn it into success.
         self.assertNotIn((81, PortState.OPEN), states)

@@ -75,7 +75,11 @@ def main() -> int:
         def run(args: list[str]) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 [sys.executable, "-m", "schedprobe", *args],
-                cwd=str(workdir), env=env, capture_output=True, text=True, check=False,
+                cwd=str(workdir),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
             )
 
         result = run(["version"])
@@ -86,8 +90,9 @@ def main() -> int:
             return fail("version", f"unexpected runtime dependencies: {payload['runtime_dependencies']}")
         print(f"step 1/4  version                OK  ({payload['version']}, {payload['platform']})")
 
-        result = run(["demo", "--scenario", "blackhole-segment", "--budget", "20000",
-                      "--out-dir", str(out_dir)])
+        result = run(
+            ["demo", "--scenario", "blackhole-segment", "--budget", "20000", "--out-dir", str(out_dir)]
+        )
         if result.returncode != 0:
             return fail("demo", result.stderr.strip()[-300:])
         if "OK   replay" not in result.stdout or "OK   evidence chain" not in result.stdout:

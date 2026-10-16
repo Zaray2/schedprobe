@@ -13,10 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from schedprobe.config import config_from_dict  # noqa: E402
-from schedprobe.evidence import read_records  # noqa: E402
-from schedprobe.models import ProbeResult  # noqa: E402
-from schedprobe.planners import build_planner  # noqa: E402
+from schedprobe.config import config_from_dict
+from schedprobe.evidence import read_records
+from schedprobe.models import ProbeResult
+from schedprobe.planners import build_planner
 
 
 def main(path: str) -> int:
@@ -49,18 +49,23 @@ def main(path: str) -> int:
             f"recorded={pair} peeked={peeked} live_recorded={recorded_live} "
             f"live_replayed={planner.live_count()}"
         )
-        if recorded_timeout is not None and replayed_timeout is not None:
-            if abs(float(recorded_timeout) - float(replayed_timeout)) > 1e-6:
-                print(
-                    f"  TIMEOUT DIFF recorded={float(recorded_timeout):.6f} "
-                    f"replayed={float(replayed_timeout):.6f} "
-                    f"rtt_replayed={planner.rtt.snapshot().get(pair[0])}"
-                )
+        if (
+            recorded_timeout is not None
+            and replayed_timeout is not None
+            and abs(float(recorded_timeout) - float(replayed_timeout)) > 1e-6
+        ):
+            print(
+                f"  TIMEOUT DIFF recorded={float(recorded_timeout):.6f} "
+                f"replayed={float(replayed_timeout):.6f} "
+                f"rtt_replayed={planner.rtt.snapshot().get(pair[0])}"
+            )
         planner.take(pair)
-        updates, changes = planner.observe(observation)
+        updates, _changes = planner.observe(observation)
         recorded_updates = record.data.get("rank_updates", [])
-        print(f"  observation={observation.state.value}/{observation.verdict.value} "
-              f"cost={observation.cost_units}")
+        print(
+            f"  observation={observation.state.value}/{observation.verdict.value} "
+            f"cost={observation.cost_units}"
+        )
         print(f"  rank_updates recorded={len(recorded_updates)} replayed={len(updates)}")
         if len(recorded_updates) != len(updates):
             rec = {(u["host"], u["port"]) for u in recorded_updates}
@@ -75,13 +80,14 @@ def main(path: str) -> int:
             if rp != want:
                 print(f"    recorded priority={recorded_next.get('priority')}")
                 print(f"    replayed priority={planner.score(*rp) if rp else None}")
-                print(f"    segment recorded={recorded_next.get('host')} "
-                      f"health={planner.book.health(str(recorded_next['host'].rsplit('.', 1)[0] + '.0')) if False else '-'}")
+                print(f"    segment recorded={recorded_next.get('host')}")
                 for seg, state in sorted(planner.book.segments.items()):
-                    print(f"      {seg}: planned={state.planned} open={state.open_count} "
-                          f"closed={state.closed_count} filtered={state.filtered_count} "
-                          f"ema={state.confidence_ema} health={state.health_score()} "
-                          f"pruned={state.pruned}")
+                    print(
+                        f"      {seg}: planned={state.planned} open={state.open_count} "
+                        f"closed={state.closed_count} filtered={state.filtered_count} "
+                        f"ema={state.confidence_ema} health={state.health_score()} "
+                        f"pruned={state.pruned}"
+                    )
                 if rp:
                     print(f"    replayed target segment={planner.book.of(rp[0]).segment}")
                 break

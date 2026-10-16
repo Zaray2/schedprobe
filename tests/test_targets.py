@@ -72,8 +72,15 @@ class TestExpandTargets(unittest.TestCase):
         self.assertEqual(expand_targets(["10.0.0.1", "10.0.0.1"]), ("10.0.0.1",))
 
     def test_rejects_shell_metacharacters(self) -> None:
-        for bad in ("127.0.0.1; id", "10.0.0.1&&whoami", "10.0.0.1|nc", "$(id)",
-                    "127.0.0.1`id`", "10.0.0.1\n10.0.0.2", "host name"):
+        for bad in (
+            "127.0.0.1; id",
+            "10.0.0.1&&whoami",
+            "10.0.0.1|nc",
+            "$(id)",
+            "127.0.0.1`id`",
+            "10.0.0.1\n10.0.0.2",
+            "host name",
+        ):
             with self.assertRaises(TargetValidationError, msg=bad):
                 expand_targets([bad])
 

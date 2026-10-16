@@ -10,25 +10,75 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 from .errors import TargetValidationError
 from .models import normalize_target, segment_of
 
+if TYPE_CHECKING:
+    from .config import SafetyConfig
+
 __all__ = [
     "COMMON_PORTS",
-    "parse_ports",
-    "expand_targets",
-    "validate_targets",
-    "segment_map",
     "SHELL_METACHARS",
+    "expand_targets",
+    "parse_ports",
+    "segment_map",
+    "validate_targets",
 ]
 
 COMMON_PORTS: tuple[int, ...] = (
-    21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 389, 443, 445, 465, 587,
-    631, 993, 995, 1025, 1080, 1433, 1521, 1723, 2049, 2181, 3000, 3306, 3389,
-    4443, 5000, 5432, 5601, 5900, 5984, 6379, 7001, 8000, 8008, 8080, 8081, 8443,
-    8888, 9000, 9090, 9200, 9300, 10000, 11211, 27017,
+    21,
+    22,
+    23,
+    25,
+    53,
+    80,
+    110,
+    111,
+    135,
+    139,
+    143,
+    389,
+    443,
+    445,
+    465,
+    587,
+    631,
+    993,
+    995,
+    1025,
+    1080,
+    1433,
+    1521,
+    1723,
+    2049,
+    2181,
+    3000,
+    3306,
+    3389,
+    4443,
+    5000,
+    5432,
+    5601,
+    5900,
+    5984,
+    6379,
+    7001,
+    8000,
+    8008,
+    8080,
+    8081,
+    8443,
+    8888,
+    9000,
+    9090,
+    9200,
+    9300,
+    10000,
+    11211,
+    27017,
 )
 
 SHELL_METACHARS: frozenset[str] = frozenset("&|;`$<>()[]{}*?!'\"\\\n\r\t #")
@@ -78,8 +128,9 @@ def expand_targets(raw_targets: Iterable[str], max_hosts: int = 4096) -> tuple[s
                     addresses=network.num_addresses,
                     limit=MAX_CIDR_ADDRESSES,
                 )
-            hosts = list(network.hosts()) if network.version == 4 and network.prefixlen <= 30 \
-                else list(network)
+            hosts = (
+                list(network.hosts()) if network.version == 4 and network.prefixlen <= 30 else list(network)
+            )
             for host in hosts:
                 text_host = str(host)
                 if text_host not in seen:
@@ -99,8 +150,9 @@ def expand_targets(raw_targets: Iterable[str], max_hosts: int = 4096) -> tuple[s
         if _HOSTNAME_RE.match(normalized) or normalized.replace(".", "").replace(":", "").isalnum():
             pass
         else:
-            raise TargetValidationError("host is neither a valid IP literal nor a valid hostname",
-                                        value=text[:64])
+            raise TargetValidationError(
+                "host is neither a valid IP literal nor a valid hostname", value=text[:64]
+            )
         if normalized not in seen:
             seen.add(normalized)
             out.append(normalized)
@@ -109,7 +161,11 @@ def expand_targets(raw_targets: Iterable[str], max_hosts: int = 4096) -> tuple[s
     return tuple(out)
 
 
-def parse_ports(spec: str | Sequence[int] | None, *, common: Sequence[int] = COMMON_PORTS) -> tuple[int, ...]:
+def parse_ports(
+    spec: str | Sequence[int] | None,
+    *,
+    common: Sequence[int] = COMMON_PORTS,
+) -> tuple[int, ...]:
     """Parse ``80,443,8000-8100`` style port specs, or a preset name.
 
     Presets: ``top50`` (see :data:`COMMON_PORTS`), ``all`` (1-65535).
@@ -152,7 +208,9 @@ def parse_ports(spec: str | Sequence[int] | None, *, common: Sequence[int] = COM
     return tuple(ports)
 
 
-def validate_targets(targets: Sequence[str], safety, max_hosts: int = 4096) -> tuple[str, ...]:
+def validate_targets(
+    targets: Sequence[str], safety: SafetyConfig, max_hosts: int = 4096
+) -> tuple[str, ...]:
     """Enforce the scope guard described in ``SafetyConfig``.
 
     Every target must be explicitly permitted by the caller's safety section:
@@ -167,14 +225,17 @@ def validate_targets(targets: Sequence[str], safety, max_hosts: int = 4096) -> t
         try:
             addr = ipaddress.ip_address(target)
         except ValueError:
+            # Not an IP literal: fall through to the hostname rules. The two raises below
+            # chain ``from None`` on purpose - the ValueError here just means "this is a
+            # name, not an address", and surfacing it would bury the actual reason.
             if not safety.allow_dns:
                 raise TargetValidationError(
                     "hostname targets are disabled by safety.allow_dns", value=target[:64]
-                )
+                ) from None
             if not _HOSTNAME_RE.match(target):
                 raise TargetValidationError(
                     "hostname does not look like an RFC 1123 name", value=target[:64]
-                )
+                ) from None
             checked.append(target)
             continue
         # Order matters here, and it is not arbitrary:
@@ -189,21 +250,15 @@ def validate_targets(targets: Sequence[str], safety, max_hosts: int = 4096) -> t
                     "loopback target refused by safety.allow_loopback", value=target
                 )
         elif addr.is_unspecified or addr.is_multicast or addr.is_reserved:
-            raise TargetValidationError(
-                "reserved/multicast/unspecified target refused", value=target
-            )
+            raise TargetValidationError("reserved/multicast/unspecified target refused", value=target)
         elif addr.is_private or addr.is_link_local:
             if not safety.allow_private:
-                raise TargetValidationError(
-                    "private target refused by safety.allow_private", value=target
-                )
-        else:
-            if not safety.allow_public:
-                raise TargetValidationError(
-                    "public target refused; pass --allow-public only for assets you are "
-                    "authorized to test",
-                    value=target,
-                )
+                raise TargetValidationError("private target refused by safety.allow_private", value=target)
+        elif not safety.allow_public:
+            raise TargetValidationError(
+                "public target refused; pass --allow-public only for assets you are authorized to test",
+                value=target,
+            )
         checked.append(target)
     if len(checked) > max_hosts:
         raise TargetValidationError("too many targets", count=len(checked), limit=max_hosts)

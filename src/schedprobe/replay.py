@@ -22,9 +22,10 @@ time" can only mean the *target* changed, because the scheduler provably did not
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .config import ScanConfig, config_from_dict
 from .errors import EvidenceError
@@ -33,7 +34,7 @@ from .frontier import CostLedger, Frontier, Pair
 from .models import ProbeResult
 from .planners import build_planner
 
-__all__ = ["ReplayReport", "replay_chain", "first_divergence"]
+__all__ = ["ReplayReport", "first_divergence", "replay_chain"]
 
 MISMATCH_LIMIT = 25
 
@@ -99,6 +100,25 @@ def _planner_payload(records: list[EvidenceRecord]) -> tuple[dict[str, Any], dic
     return dict(header.data), {"kind": planner_kind}, config
 
 
+def _as_int(value: object, default: int) -> int:
+    """Coerce an untrusted JSON value to ``int``, falling back instead of raising.
+
+    Every value that comes back out of an evidence log is ``Any``: the log is a file on
+    disk and may have been written by an older version, hand-edited, or corrupted. The
+    timeline builders therefore go through here rather than calling ``int()`` directly.
+    """
+    if isinstance(value, bool) or value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, str)):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
 def first_divergence(report: ReplayReport) -> str | None:
     return report.divergences[0] if report.divergences else None
 
@@ -149,8 +169,7 @@ def replay_chain(path: str | os.PathLike[str], *, strict: bool = False) -> Repla
             actual = replayed_scores[pair]
             if abs(expected - actual) > 1e-9:
                 report.divergences.append(
-                    f"initial score mismatch for {pair[0]}:{pair[1]}: "
-                    f"recorded={expected} replayed={actual}"
+                    f"initial score mismatch for {pair[0]}:{pair[1]}: recorded={expected} replayed={actual}"
                 )
                 break
 
@@ -189,9 +208,7 @@ def replay_chain(path: str | os.PathLike[str], *, strict: bool = False) -> Repla
         total = len(segments)
         if total == 0:
             return max(1, min(capacity, 8))
-        evaluated = sum(
-            1 for state in segments.values() if (state.open_count + state.closed_count) > 0
-        )
+        evaluated = sum(1 for state in segments.values() if (state.open_count + state.closed_count) > 0)
         if evaluated == total:
             return max(1, capacity)
         remaining = total - evaluated
@@ -223,8 +240,10 @@ def replay_chain(path: str | os.PathLike[str], *, strict: bool = False) -> Repla
             continue
         observation = ProbeResult.from_dict(dict(record.data["observation"]))
         dispatched = dict(record.data.get("dispatched", {}))
-        executed_pair = (str(dispatched.get("host", observation.host)),
-                         int(dispatched.get("port", observation.port)))
+        executed_pair = (
+            str(dispatched.get("host", observation.host)),
+            int(dispatched.get("port", observation.port)),
+        )
         recorded_decision = record.data.get("decision")
         recorded_updates = record.data.get("rank_updates", [])
         recorded_changes = record.data.get("live_changes", [])
@@ -371,7 +390,8 @@ def replay_chain(path: str | os.PathLike[str], *, strict: bool = False) -> Repla
                     replayed_reservations = ledger.reservation_map()
                     if recorded_reservations != replayed_reservations:
                         differing = [
-                            key for key in sorted(set(recorded_reservations) | set(replayed_reservations))
+                            key
+                            for key in sorted(set(recorded_reservations) | set(replayed_reservations))
                             if recorded_reservations.get(key) != replayed_reservations.get(key)
                         ][:4]
                         report.divergences.append(
@@ -390,13 +410,14 @@ def replay_chain(path: str | os.PathLike[str], *, strict: bool = False) -> Repla
         report.segments_match = _segments_equal(recorded_segments, replayed_segments)
         if not report.segments_match:
             report.divergences.append("final segment state differs from the recorded state")
-        recorded_live = int(last_probe.data.get("live_pairs", -1))
-        report.frontier_match = recorded_live == planner.live_count()
+        recorded_live_count = _as_int(last_probe.data.get("live_pairs"), -1)
+        report.frontier_match = recorded_live_count == planner.live_count()
         if not report.frontier_match:
             report.divergences.append(
-                f"final frontier size differs: recorded={recorded_live} replayed={planner.live_count()}"
+                f"final frontier size differs: recorded={recorded_live_count} "
+                f"replayed={planner.live_count()}"
             )
-        report.recorded_cost_spent = int(last_probe.data.get("cost_spent", 0))
+        report.recorded_cost_spent = _as_int(last_probe.data.get("cost_spent"), 0)
         report.final_cost_spent = planner.book.total_cost()
     else:
         report.frontier_match = planner.live_count() == len(recorded_frontier)
@@ -405,7 +426,8 @@ def replay_chain(path: str | os.PathLike[str], *, strict: bool = False) -> Repla
 
     if strict and not report.ok:
         raise EvidenceError(
-            "strict replay failed", divergences=len(report.divergences),
+            "strict replay failed",
+            divergences=len(report.divergences),
             first=first_divergence(report),
         )
     return report
@@ -488,10 +510,23 @@ def _canonical_changes(items: Iterable[Any]) -> list[tuple[Any, ...]]:
 def _segments_equal(recorded: list[dict[str, Any]], replayed: list[dict[str, Any]]) -> bool:
     if len(recorded) != len(replayed):
         return False
-    for left, right in zip(sorted(recorded, key=lambda d: d["segment"]),
-                           sorted(replayed, key=lambda d: d["segment"])):
-        for key in ("segment", "planned", "open", "closed", "filtered", "undetermined",
-                    "cost_spent", "pruned"):
+    # Both lists describe the same set of segments; strict=True turns a mismatch into a
+    # failure instead of a silently truncated comparison.
+    for left, right in zip(
+        sorted(recorded, key=lambda d: d["segment"]),
+        sorted(replayed, key=lambda d: d["segment"]),
+        strict=True,
+    ):
+        for key in (
+            "segment",
+            "planned",
+            "open",
+            "closed",
+            "filtered",
+            "undetermined",
+            "cost_spent",
+            "pruned",
+        ):
             if left.get(key) != right.get(key):
                 return False
     return True

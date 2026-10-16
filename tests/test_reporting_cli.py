@@ -10,12 +10,12 @@ Two themes:
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from schedprobe import __version__
 from schedprobe.cli.console import (
     EXIT_EVIDENCE,
     EXIT_INTERNAL,
@@ -70,7 +70,8 @@ class TestDiffClassification(unittest.TestCase):
         left = {("10.0.0.1", 80): PortState.CLOSED}
         right = {("10.0.0.1", 80): PortState.OPEN}
         report = diff_states(
-            left, right,
+            left,
+            right,
             left_history=self._history(PortState.CLOSED),
             right_history=self._history(PortState.OPEN),
         )
@@ -82,7 +83,7 @@ class TestDiffClassification(unittest.TestCase):
     def test_unconfirmed_change_is_unstable_not_changed(self) -> None:
         left = {("10.0.0.1", 80): PortState.CLOSED}
         right = {("10.0.0.1", 80): PortState.OPEN}
-        report = diff_states(left, right)   # no histories -> no confirmation
+        report = diff_states(left, right)  # no histories -> no confirmation
         self.assertEqual(report.changed, [])
         self.assertEqual(len(report.unstable), 1)
         self.assertEqual(report.unstable[0].severity, "info")
@@ -97,7 +98,8 @@ class TestDiffClassification(unittest.TestCase):
         left = {("10.0.0.1", 80): PortState.CLOSED}
         right = {("10.0.0.1", 80): PortState.OPEN}
         report = diff_states(
-            left, right,
+            left,
+            right,
             left_history=self._history(PortState.CLOSED, 2),
             right_history=self._history(PortState.OPEN, 2),
         )
@@ -107,7 +109,8 @@ class TestDiffClassification(unittest.TestCase):
         left = {("10.0.0.1", 80): PortState.CLOSED}
         right = {("10.0.0.1", 80): PortState.CLOSED, ("10.0.0.1", 443): PortState.OPEN}
         report = diff_states(
-            left, right,
+            left,
+            right,
             left_history=self._history(PortState.CLOSED, 2),
             right_history={("10.0.0.1", 443): [PortState.OPEN] * 2},
             scope={("10.0.0.1", 80)},
@@ -120,7 +123,8 @@ class TestDiffClassification(unittest.TestCase):
         left = {("10.0.0.1", 80): PortState.CLOSED}
         right = {("10.0.0.1", 80): PortState.CLOSED, ("10.0.0.1", 443): PortState.OPEN}
         report = diff_states(
-            left, right,
+            left,
+            right,
             scope={("10.0.0.1", 80), ("10.0.0.1", 443)},
         )
         self.assertEqual(len(report.new), 1)
@@ -136,8 +140,17 @@ class TestDiffClassification(unittest.TestCase):
         payload = diff_states(
             {("10.0.0.1", 80): PortState.OPEN}, {("10.0.0.1", 80): PortState.OPEN}
         ).to_dict()
-        for key in ("left", "right", "rules_version", "counts", "new", "disappeared",
-                    "changed", "unstable", "not_probed"):
+        for key in (
+            "left",
+            "right",
+            "rules_version",
+            "counts",
+            "new",
+            "disappeared",
+            "changed",
+            "unstable",
+            "not_probed",
+        ):
             self.assertIn(key, payload)
 
     def test_severity_ranking_and_filtering(self) -> None:
@@ -191,8 +204,9 @@ class TestRenderers(unittest.TestCase):
         self.assertEqual(render_table([], []), "")
 
     def test_render_summary_formats_ratios_and_times(self) -> None:
-        text = render_summary({"waste_ratio": 0.5, "elapsed_s": 1.25,
-                               "time_to_first_open_s": None, "first_open": ("h", 80)})
+        text = render_summary(
+            {"waste_ratio": 0.5, "elapsed_s": 1.25, "time_to_first_open_s": None, "first_open": ("h", 80)}
+        )
         self.assertIn("50.0%", text)
         self.assertIn("1.2500s", text)
         self.assertIn("h:80", text)
@@ -212,7 +226,9 @@ class TestRenderers(unittest.TestCase):
         self.assertIn("81", render_run_table(results, include_closed=True))
 
     def test_render_run_table_applies_the_display_callable(self) -> None:
-        results = {("10.0.0.1", 80): ProbeResult("10.0.0.1", 80, PortState.OPEN, Verdict.CONNECTED, 1, 0.99)}
+        results = {
+            ("10.0.0.1", 80): ProbeResult("10.0.0.1", 80, PortState.OPEN, Verdict.CONNECTED, 1, 0.99)
+        }
         table = render_run_table(results, display_host=lambda host: "h:deadbeef")
         self.assertIn("h:deadbeef", table)
         self.assertNotIn("10.0.0.1", table)
@@ -225,34 +241,74 @@ class TestRenderers(unittest.TestCase):
         self.assertIn("hidden", render_run_table(results, max_rows=2))
 
     def test_render_verify_ok_and_fail(self) -> None:
-        ok = render_verify({"ok": True, "records": 3, "run_id": "r", "head": "sha256:x",
-                            "kinds": {"probe": 3}, "path": "p"})
+        ok = render_verify(
+            {
+                "ok": True,
+                "records": 3,
+                "run_id": "r",
+                "head": "sha256:x",
+                "kinds": {"probe": 3},
+                "path": "p",
+            }
+        )
         self.assertTrue(ok.startswith("OK"))
         bad = render_verify({"ok": False, "records": 0, "first_bad_seq": 2, "reason": "nope"})
         self.assertTrue(bad.startswith("FAIL"))
         self.assertIn("nope", bad)
 
     def test_render_replay_lists_divergences(self) -> None:
-        text = render_replay({"ok": False, "run_id": "r", "planner": "adaptive",
-                              "observations": 1, "decisions_checked": 1,
-                              "rank_updates_checked": 0, "live_changes_checked": 0,
-                              "frontier_match": True, "segments_match": False,
-                              "divergences": ["a", "b"]})
+        text = render_replay(
+            {
+                "ok": False,
+                "run_id": "r",
+                "planner": "adaptive",
+                "observations": 1,
+                "decisions_checked": 1,
+                "rank_updates_checked": 0,
+                "live_changes_checked": 0,
+                "frontier_match": True,
+                "segments_match": False,
+                "divergences": ["a", "b"],
+            }
+        )
         self.assertIn("FAIL", text)
         self.assertIn("- a", text)
 
     def test_render_diff_shows_counts(self) -> None:
-        text = render_diff({"left": "a", "right": "b", "new": ["x"], "disappeared": [],
-                            "changed": [], "unstable": [], "note": "n"})
+        text = render_diff(
+            {
+                "left": "a",
+                "right": "b",
+                "new": ["x"],
+                "disappeared": [],
+                "changed": [],
+                "unstable": [],
+                "note": "n",
+            }
+        )
         self.assertIn("new         : 1", text)
 
     def test_render_benchmark_table(self) -> None:
         payload = {
-            "scenario": "s", "seed": 1, "budget": 10, "hosts": 1, "ports": 2,
-            "runs": [{"planner": "adaptive", "open_found": 1, "open_total": 2, "recall": 0.5,
-                      "precision": 1.0, "dispatched": 3, "cost_spent": 100,
-                      "cost_of_filtered": 50, "waste_ratio": 0.5,
-                      "time_to_first_open_cost": 10}],
+            "scenario": "s",
+            "seed": 1,
+            "budget": 10,
+            "hosts": 1,
+            "ports": 2,
+            "runs": [
+                {
+                    "planner": "adaptive",
+                    "open_found": 1,
+                    "open_total": 2,
+                    "recall": 0.5,
+                    "precision": 1.0,
+                    "dispatched": 3,
+                    "cost_spent": 100,
+                    "cost_of_filtered": 50,
+                    "waste_ratio": 0.5,
+                    "time_to_first_open_cost": 10,
+                }
+            ],
             "delta_vs_fixed": {},
         }
         text = render_benchmark_table(payload)
@@ -288,15 +344,17 @@ class TestWriteResults(unittest.TestCase):
         self.assertEqual(len(text.strip().splitlines()), 3)
 
     def test_include_closed_and_max_results(self) -> None:
-        path = write_results(self.dir / "r.json", self.results, fmt="json",
-                             include_closed=False, max_results=1)
+        path = write_results(
+            self.dir / "r.json", self.results, fmt="json", include_closed=False, max_results=1
+        )
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["results"][0]["port"], 80)
 
     def test_display_host_hook_is_applied(self) -> None:
-        path = write_results(self.dir / "r.json", self.results, fmt="json",
-                             display_host=lambda host: "redacted")
+        path = write_results(
+            self.dir / "r.json", self.results, fmt="json", display_host=lambda host: "redacted"
+        )
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(payload["results"][0]["host"], "redacted")
 
@@ -307,16 +365,12 @@ class TestWriteResults(unittest.TestCase):
 
 class TestEmitter(unittest.TestCase):
     def test_data_prints_json_in_both_modes(self) -> None:
-        import io
-
         for json_mode in (False, True):
             buffer = io.StringIO()
             Emitter(json_mode=json_mode, stream=buffer).data({"a": 1})
             self.assertEqual(json.loads(buffer.getvalue()), {"a": 1})
 
     def test_say_is_silent_in_json_mode(self) -> None:
-        import io
-
         buffer = io.StringIO()
         emitter = Emitter(json_mode=True, stream=buffer)
         emitter.say("hidden")
@@ -324,8 +378,6 @@ class TestEmitter(unittest.TestCase):
         self.assertEqual(buffer.getvalue().strip(), "forced")
 
     def test_quiet_suppresses_say_but_not_force(self) -> None:
-        import io
-
         buffer = io.StringIO()
         emitter = Emitter(quiet=True, stream=buffer)
         emitter.say("hidden")
@@ -333,8 +385,10 @@ class TestEmitter(unittest.TestCase):
         self.assertEqual(buffer.getvalue().strip(), "forced")
 
     def test_configure_stdio_returns_an_encoding(self) -> None:
-        self.assertIn(configure_stdio().lower(), {"utf-8", "utf8", "gbk", "cp936", "ascii",
-                                                 "utf-16", "utf-16-le", "utf-16-be"})
+        self.assertIn(
+            configure_stdio().lower(),
+            {"utf-8", "utf8", "gbk", "cp936", "ascii", "utf-16", "utf-16-le", "utf-16-be"},
+        )
 
     def test_run_async_returns_the_value(self) -> None:
         async def coro() -> int:
@@ -392,10 +446,23 @@ class TestCliContract(unittest.TestCase):
         self.assertEqual(main(["config", "validate", str(self.dir / "nope.toml")]), EXIT_USAGE)
 
     def test_scan_writes_a_verifiable_run(self) -> None:
-        code = main([
-            "scan", "-t", "127.0.0.1", "-p", "80,443", "--backend", "fake",
-            "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir),
-        ])
+        code = main(
+            [
+                "scan",
+                "-t",
+                "127.0.0.1",
+                "-p",
+                "80,443",
+                "--backend",
+                "fake",
+                "--scenario",
+                "healthy",
+                "--budget",
+                "5000",
+                "--out-dir",
+                str(self.dir),
+            ]
+        )
         self.assertEqual(code, EXIT_OK)
         runs = list(self.dir.glob("*/evidence.jsonl"))
         self.assertEqual(len(runs), 1)
@@ -405,21 +472,48 @@ class TestCliContract(unittest.TestCase):
     def test_scan_rejects_a_bad_planner(self) -> None:
         # ``--planner`` uses argparse choices, so a bad value is a parse error (exit 2).
         with self.assertRaises(SystemExit) as ctx:
-            main(["scan", "-t", "127.0.0.1", "-p", "80", "--backend", "fake",
-                  "--planner", "nope", "--out-dir", str(self.dir)])
+            main(
+                [
+                    "scan",
+                    "-t",
+                    "127.0.0.1",
+                    "-p",
+                    "80",
+                    "--backend",
+                    "fake",
+                    "--planner",
+                    "nope",
+                    "--out-dir",
+                    str(self.dir),
+                ]
+            )
         self.assertEqual(ctx.exception.code, EXIT_USAGE)
 
     def test_scan_rejects_a_public_target_without_opt_in(self) -> None:
-        code = main(["scan", "-t", "8.8.8.8", "-p", "80", "--backend", "fake",
-                     "--out-dir", str(self.dir)])
+        code = main(["scan", "-t", "8.8.8.8", "-p", "80", "--backend", "fake", "--out-dir", str(self.dir)])
         self.assertEqual(code, EXIT_USAGE)
 
     def test_verify_on_a_missing_run(self) -> None:
         self.assertEqual(main(["verify", str(self.dir / "nope")]), EXIT_EVIDENCE)
 
     def test_verify_on_a_tampered_chain(self) -> None:
-        main(["scan", "-t", "127.0.0.1", "-p", "80", "--backend", "fake",
-              "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir)])
+        main(
+            [
+                "scan",
+                "-t",
+                "127.0.0.1",
+                "-p",
+                "80",
+                "--backend",
+                "fake",
+                "--scenario",
+                "healthy",
+                "--budget",
+                "5000",
+                "--out-dir",
+                str(self.dir),
+            ]
+        )
         evidence = next(self.dir.glob("*/evidence.jsonl"))
         lines = evidence.read_text(encoding="utf-8").splitlines()
         lines[2] = lines[2].replace('"plan"', '"tampered"', 1)
@@ -427,36 +521,91 @@ class TestCliContract(unittest.TestCase):
         self.assertEqual(main(["verify", str(evidence)]), EXIT_EVIDENCE)
 
     def test_explain_runs_against_a_real_log(self) -> None:
-        main(["scan", "-t", "127.0.0.1", "-p", "80", "--backend", "fake",
-              "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir)])
+        main(
+            [
+                "scan",
+                "-t",
+                "127.0.0.1",
+                "-p",
+                "80",
+                "--backend",
+                "fake",
+                "--scenario",
+                "healthy",
+                "--budget",
+                "5000",
+                "--out-dir",
+                str(self.dir),
+            ]
+        )
         evidence = next(self.dir.glob("*/evidence.jsonl"))
         self.assertEqual(main(["explain", str(evidence), "--top", "1"]), EXIT_OK)
         self.assertEqual(main(["explain", str(evidence), "--reasons"]), EXIT_OK)
 
     def test_explain_rejects_a_malformed_pair(self) -> None:
-        main(["scan", "-t", "127.0.0.1", "-p", "80", "--backend", "fake",
-              "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir)])
+        main(
+            [
+                "scan",
+                "-t",
+                "127.0.0.1",
+                "-p",
+                "80",
+                "--backend",
+                "fake",
+                "--scenario",
+                "healthy",
+                "--budget",
+                "5000",
+                "--out-dir",
+                str(self.dir),
+            ]
+        )
         evidence = next(self.dir.glob("*/evidence.jsonl"))
         self.assertEqual(main(["explain", str(evidence), "--pair", "nonsense"]), EXIT_USAGE)
 
     def test_diff_of_a_run_with_itself_is_empty(self) -> None:
-        main(["scan", "-t", "127.0.0.1", "-p", "80,443", "--backend", "fake",
-              "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir)])
+        main(
+            [
+                "scan",
+                "-t",
+                "127.0.0.1",
+                "-p",
+                "80,443",
+                "--backend",
+                "fake",
+                "--scenario",
+                "healthy",
+                "--budget",
+                "5000",
+                "--out-dir",
+                str(self.dir),
+            ]
+        )
         run_dir = next(self.dir.glob("*/evidence.jsonl")).parent
         self.assertEqual(main(["diff", str(run_dir), str(run_dir)]), EXIT_OK)
 
     def test_bench_smoke(self) -> None:
         self.assertEqual(
-            main(["bench", "--scenario", "healthy", "--budget", "5000",
-                  "--out-dir", str(self.dir)]),
+            main(["bench", "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir)]),
             EXIT_OK,
         )
 
     def test_bench_honours_the_save_path(self) -> None:
         target = self.dir / "custom-name.json"
         self.assertEqual(
-            main(["bench", "--scenario", "healthy", "--budget", "5000",
-                  "--out-dir", str(self.dir), "--save", str(target)]),
+            main(
+                [
+                    "bench",
+                    "--scenario",
+                    "healthy",
+                    "--budget",
+                    "5000",
+                    "--out-dir",
+                    str(self.dir),
+                    "--save",
+                    str(target),
+                ]
+            ),
             EXIT_OK,
         )
         self.assertTrue(target.is_file())
@@ -468,9 +617,26 @@ class TestCliContract(unittest.TestCase):
         )
 
     def test_redacted_scan_hides_the_host_in_artifacts(self) -> None:
-        main(["scan", "-t", "10.1.2.3", "-p", "80", "--backend", "fake",
-              "--scenario", "healthy", "--budget", "5000", "--out-dir", str(self.dir),
-              "--redact", "--format", "json"])
+        main(
+            [
+                "scan",
+                "-t",
+                "10.1.2.3",
+                "-p",
+                "80",
+                "--backend",
+                "fake",
+                "--scenario",
+                "healthy",
+                "--budget",
+                "5000",
+                "--out-dir",
+                str(self.dir),
+                "--redact",
+                "--format",
+                "json",
+            ]
+        )
         results = next(self.dir.glob("*/results.json"))
         payload = json.loads(results.read_text(encoding="utf-8"))
         self.assertTrue(payload["results"], "the scan must have produced rows")

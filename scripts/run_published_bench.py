@@ -62,9 +62,7 @@ def main() -> int:
         print(f"\n### {scenario}")
         by_planner: dict[str, list[str]] = {}
         for row in rows:
-            verdict = (
-                f"{row.cost_to_full_recall}" if row.full_recall else f"no ({row.recall:.0%})"
-            )
+            verdict = f"{row.cost_to_full_recall}" if row.full_recall else f"no ({row.recall:.0%})"
             by_planner.setdefault(row.planner, []).append(f"b{row.budget}={verdict}")
         for planner, cells in sorted(by_planner.items()):
             print(f"  {planner:<18} " + "  ".join(cells))

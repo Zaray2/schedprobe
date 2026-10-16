@@ -6,16 +6,20 @@
 #     only because it is in the ``dev`` extra; it is NOT the primary runner here.
 #   * ``python -m pip install -e ".[dev]"`` is the only install step: the package
 #     itself has zero runtime dependencies (pyproject.toml: dependencies = []).
-#   * ``ruff check .`` lints the whole repository, and pyproject.toml's
-#     [tool.ruff.lint.per-file-ignores] only exempts ``tests/*`` (PLR2004, SLF001)
-#     and ``bench/*`` (T201). ``scripts/*.py`` is therefore linted as application code.
+#   * ``ruff check .`` lints the whole repository. pyproject.toml's
+#     [tool.ruff.lint.per-file-ignores] exempts ``tests/*`` (PLR2004, SLF001),
+#     ``bench/*`` (T201) and three modules where lazy imports are deliberate
+#     (cli/*, backends/base.py, config.py).
+#   * Every step below was run locally on Python 3.14 against this commit before it was
+#     pushed: ``ruff check`` clean, ``ruff format --check`` clean, ``mypy`` clean,
+#     225 tests passing. The 3.11/3.12/3.13 legs are the only part that cannot be
+#     reproduced locally; the first push of this repository failed on ``ruff check``
+#     precisely because the tooling had not been installed in the authoring environment.
 #   * The benchmark smoke step is expected to write artifacts: the harness writes to
 #     ``bench/runs/`` and ``scripts/run_published_bench.py`` also rewrites
 #     ``docs/research/benchmark-raw.json`` (see RAW_PATH in that script). That is
 #     intended for a smoke run; the outputs are uploaded as build artifacts and are
 #     never committed back to the repository.
-#   * This workflow has NOT been run on GitHub from this checkout (the working copy
-#     has no .git metadata), so treat the first run as unverified.
 
 name: CI
 

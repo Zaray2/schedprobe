@@ -425,11 +425,12 @@ OK   replay: demo-blackhole-segment-seed1337 (planner=adaptive)
    `scripts/verify_invariants.py` 的 72 组组合校验。（此前指向 `tests/test_diff.py`、
    `tests/test_fake_backend.py`、`tests/test_adaptive_planner.py`、
    `docs/research/benchmark-design.md` 的引用已修正。）
-9. **CI 与静态检查未在本机验证。** 本机没有 `.git`、没有安装 `ruff` / `mypy` / `pytest`，
-   `.github/workflows/ci.yml` 从未在 GitHub 上跑过。测试套件本身**只用标准库**，因此
-   `python -m unittest discover -s tests -t .` 在干净环境里可直接执行（本机实测通过）。
-   另注：`ruff check .` 会把 `scripts/*.py` 当应用代码检查（per-file-ignores 只豁免
-   `tests/*` 与 `bench/*`）。
+9. **CI 的静态检查现已在本机跑通，但只在 Python 3.14 上。** 仓库首次推送时
+   `ruff check .` 失败（250 条违规）——原因正是作者环境没装 ruff。现在 `ruff check`、
+   `ruff format --check`、`mypy src/schedprobe` 与 225 项测试**全部在本地通过**，
+   相关工具版本已在 `pyproject.toml` 的 dev extra 中收紧（`ruff>=0.17,<0.18`，
+   因为 ruff 0.17 新增的规则集正是首次失败的原因之一）。
+   仍**未验证**的是 CI 矩阵里的 Python 3.11 / 3.12 两条腿——本机只有 3.14。
 10. **真实后端只在回环上验证过。** [`scripts/loopback_fixture.py`](scripts/loopback_fixture.py)
     在本机 bind 两个回环端口、用真实后端探测、并断言：开放端口被判为 `open`、未监听端口不被误判为
     open、抓到的 banner 中控制字符被剥离、证据链通过、回放零分歧（实测输出

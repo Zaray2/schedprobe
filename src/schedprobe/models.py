@@ -10,21 +10,23 @@ health is a running estimate and must be.
 from __future__ import annotations
 
 import enum
+import ipaddress
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Any, Iterable
+from typing import Any
 
 __all__ = [
-    "PortState",
-    "Verdict",
-    "ProbeResult",
     "PlannedProbe",
+    "PortState",
+    "ProbeResult",
     "SegmentState",
+    "Verdict",
     "normalize_target",
     "segment_of",
 ]
 
 
-class PortState(str, enum.Enum):
+class PortState(enum.StrEnum):
     """TCP port state as understood by this tool.
 
     ``UNDETERMINED`` is a first-class outcome: the scheduler must never silently
@@ -42,7 +44,7 @@ class PortState(str, enum.Enum):
         return self is not PortState.UNDETERMINED
 
 
-class Verdict(str, enum.Enum):
+class Verdict(enum.StrEnum):
     """How a port state was decided - the *why*, not the *what*.
 
     This is the field that makes a scan report re-readable months later.
@@ -105,7 +107,7 @@ class ProbeResult:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "ProbeResult":
+    def from_dict(cls, payload: dict[str, Any]) -> ProbeResult:
         return cls(
             host=str(payload["host"]),
             port=int(payload["port"]),
@@ -149,7 +151,7 @@ class PlannedProbe:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "PlannedProbe":
+    def from_dict(cls, payload: dict[str, Any]) -> PlannedProbe:
         return cls(
             host=str(payload["host"]),
             port=int(payload["port"]),
@@ -279,7 +281,7 @@ class SegmentState:
             "prune_reason": self.prune_reason,
         }
 
-    def copy(self) -> "SegmentState":
+    def copy(self) -> SegmentState:
         return replace(self)
 
 
@@ -291,8 +293,6 @@ def normalize_target(raw: str) -> str:
     lower-cased. Resolution happens only in the real backend, never here, so the
     planner and the simulation share one representation.
     """
-    import ipaddress
-
     token = raw.strip()
     if token.startswith("[") and token.endswith("]"):
         token = token[1:-1]
@@ -314,8 +314,6 @@ def segment_of(host: str, prefix_len: int = 24) -> str:
     collapse into a single ``"dns"`` segment because the scheduler cannot reason
     about their topology without resolving them.
     """
-    import ipaddress
-
     try:
         addr = ipaddress.ip_address(host)
     except ValueError:

@@ -23,32 +23,34 @@ where the adaptive policy *loses*.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import platform
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
+from . import __version__
 from .backends.fake import FakeBackend, NetworkScenario, builtin_scenarios
 from .config import NetworkConfig, PlannerConfig, ScanConfig
 from .engine import ScanEngine
 from .errors import ConfigError
+from .evidence import read_records
 from .models import PortState
 from .planners import PLANNER_CLASSES
 
 __all__ = [
+    "DEFAULT_PLANNERS",
     "BenchmarkCase",
     "BenchmarkResult",
     "BudgetSweepRow",
-    "run_benchmark",
-    "compare",
-    "budget_sweep",
-    "default_case",
     "all_cases",
+    "budget_sweep",
+    "compare",
+    "default_case",
     "environment",
+    "run_benchmark",
     "write_results",
-    "DEFAULT_PLANNERS",
 ]
 
 DEFAULT_PLANNERS: tuple[str, ...] = ("adaptive", "fixed", "random", "fixed-longtimeout")
@@ -274,17 +276,13 @@ async def run_benchmark(case: BenchmarkCase, out_dir: str | Path) -> list[Benchm
                     open_found += 1
                 else:
                     false_open += 1
-            elif result.state is PortState.CLOSED:
-                if expected is PortState.CLOSED:
-                    closed_found += 1
-            elif result.state is PortState.FILTERED:
-                if expected is PortState.FILTERED:
-                    filtered_found += 1
+            elif result.state is PortState.CLOSED and expected is PortState.CLOSED:
+                closed_found += 1
+            elif result.state is PortState.FILTERED and expected is PortState.FILTERED:
+                filtered_found += 1
 
         first_open_cost = _nth_open_cost(run.evidence_path, 1)
-        full_recall_cost = (
-            _nth_open_cost(run.evidence_path, totals["open"]) if totals["open"] else 0
-        )
+        full_recall_cost = _nth_open_cost(run.evidence_path, totals["open"]) if totals["open"] else 0
         results.append(
             BenchmarkResult(
                 planner=planner,
@@ -320,8 +318,6 @@ def _nth_open_cost(evidence_path: str | Path, n: int) -> int | None:
     This is the scheduler's own answer to 'how long until I had the answer?', and it
     is readable straight out of the evidence log, so anyone can re-derive it.
     """
-    from .evidence import read_records
-
     seen = 0
     for record in read_records(evidence_path):
         if record.kind != "probe":
@@ -357,9 +353,7 @@ def compare(results: Sequence[BenchmarkResult], baseline: str = "fixed") -> dict
             "confirms": item.confirms,
         }
         if base.time_to_first_open_cost and item.time_to_first_open_cost:
-            entry["ttfo_cost_delta_pct"] = _pct(
-                item.time_to_first_open_cost, base.time_to_first_open_cost
-            )
+            entry["ttfo_cost_delta_pct"] = _pct(item.time_to_first_open_cost, base.time_to_first_open_cost)
         if base.cost_to_full_recall and item.cost_to_full_recall:
             entry["cost_to_full_recall_delta_pct"] = _pct(
                 item.cost_to_full_recall, base.cost_to_full_recall
@@ -374,7 +368,7 @@ def _pct(value: float, baseline: float) -> float | None:
     return round((value - baseline) / baseline * 100, 2)
 
 
-async def budget_sweep(
+async def budget_sweep(  # noqa: PLR0913 - a sweep is defined by these six knobs
     scenario: str,
     budgets: Sequence[int],
     out_dir: str | Path,
@@ -428,8 +422,6 @@ def write_results(path: str | Path, payload: Mapping[str, Any]) -> Path:
 
 def environment() -> dict[str, Any]:
     """Record the environment so a result can be attributed to a machine + version."""
-    from . import __version__
-
     return {
         "schedprobe": __version__,
         "python": platform.python_version(),

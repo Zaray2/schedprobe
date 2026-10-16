@@ -25,27 +25,29 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
+from types import TracebackType
+from typing import Any
 
 from .errors import EvidenceError
 from .util import canonical_json, sha256_hex
 
 __all__ = [
     "GENESIS_PREFIX",
-    "EvidenceRecord",
-    "EvidenceLog",
-    "read_records",
-    "verify_chain",
     "ChainStatus",
-    "utc_now_iso",
+    "EvidenceLog",
+    "EvidenceRecord",
     "decision_timeline",
+    "file_digest",
     "observation_timeline",
+    "read_records",
     "reason_histogram",
     "status_to_dict",
-    "file_digest",
+    "utc_now_iso",
+    "verify_chain",
     "write_manifest",
 ]
 
@@ -55,7 +57,7 @@ MANIFEST_FILENAME = "manifest.json"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +85,7 @@ class EvidenceRecord:
         return canonical_json({**self.body(), "hash": self.hash})
 
     @classmethod
-    def from_json(cls, line: str) -> "EvidenceRecord":
+    def from_json(cls, line: str) -> EvidenceRecord:
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -136,7 +138,7 @@ class EvidenceLog:
         if self.path.exists() and not truncate and self.path.stat().st_size > 0:
             # Reopening an existing chain: adopt its tail so we never fork it.
             last = None
-            for last in read_records(self.path):
+            for last in read_records(self.path):  # noqa: B007 - we want the tail
                 pass
             if last is not None:
                 if last.run_id != run_id:
@@ -147,13 +149,24 @@ class EvidenceLog:
                     )
                 self._seq = last.seq
                 self._prev = last.hash
-        self._handle = open(self.path, mode, encoding="utf-8", newline="\n")
+        # The handle lives for the whole object lifetime on purpose: the chain is
+        # appended to record by record and must stay open across many writes, so a
+        # ``with`` block per record would cost an open/close pair per line. ``close``,
+        # ``__exit__`` and the CLI's error paths all close it.
+        self._handle = open(  # noqa: SIM115
+            self.path, mode, encoding="utf-8", newline="\n"
+        )
 
     # ------------------------------------------------------------------ context
-    def __enter__(self) -> "EvidenceLog":
+    def __enter__(self) -> EvidenceLog:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.close()
 
     def close(self) -> None:
@@ -209,7 +222,7 @@ def read_records(path: str | os.PathLike[str]) -> Iterator[EvidenceRecord]:
     file_path = Path(path)
     if not file_path.is_file():
         raise EvidenceError("evidence log not found", path=str(file_path))
-    with open(file_path, "r", encoding="utf-8") as handle:
+    with open(file_path, encoding="utf-8") as handle:
         for number, line in enumerate(handle, start=1):
             stripped = line.strip()
             if not stripped:
@@ -244,21 +257,44 @@ def verify_chain(path: str | os.PathLike[str]) -> ChainStatus:
             run_id = record.run_id
             expected_prev = GENESIS_PREFIX + sha256_hex(run_id)
             if record.prev != expected_prev:
-                return ChainStatus(False, 1, run_id, record.hash, record.seq,
-                                   "genesis mismatch: first record does not chain from the run id")
+                return ChainStatus(
+                    False,
+                    1,
+                    run_id,
+                    record.hash,
+                    record.seq,
+                    "genesis mismatch: first record does not chain from the run id",
+                )
         if record.seq != expected_seq + 1:
-            return ChainStatus(False, count, run_id, head, record.seq,
-                               f"sequence discontinuity: expected {expected_seq + 1}, got {record.seq}")
+            return ChainStatus(
+                False,
+                count,
+                run_id,
+                head,
+                record.seq,
+                f"sequence discontinuity: expected {expected_seq + 1}, got {record.seq}",
+            )
         if record.prev != expected_prev:
-            return ChainStatus(False, count, run_id, head, record.seq,
-                               "previous-hash mismatch: a record was inserted, removed or reordered")
+            return ChainStatus(
+                False,
+                count,
+                run_id,
+                head,
+                record.seq,
+                "previous-hash mismatch: a record was inserted, removed or reordered",
+            )
         recomputed = "sha256:" + sha256_hex(canonical_json(record.body()))
         if recomputed != record.hash:
-            return ChainStatus(False, count, run_id, head, record.seq,
-                               "record digest mismatch: the record body was modified after writing")
+            return ChainStatus(
+                False,
+                count,
+                run_id,
+                head,
+                record.seq,
+                "record digest mismatch: the record body was modified after writing",
+            )
         if record.run_id != run_id:
-            return ChainStatus(False, count, run_id, head, record.seq,
-                               "run id changed mid-chain")
+            return ChainStatus(False, count, run_id, head, record.seq, "run id changed mid-chain")
         kinds[record.kind] = kinds.get(record.kind, 0) + 1
         expected_seq = record.seq
         expected_prev = record.hash
@@ -297,6 +333,25 @@ def monotonic() -> float:
     return time.monotonic()
 
 
+def _as_int(value: object, default: int) -> int:
+    """Coerce an untrusted JSON value to ``int``, falling back instead of raising.
+
+    Every value that comes back out of an evidence log is ``Any``: the log is a file on
+    disk and may have been written by an older version, hand-edited, or corrupted. The
+    timeline builders therefore go through here rather than calling ``int()`` directly.
+    """
+    if isinstance(value, bool) or value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, str)):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
 def observation_timeline(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
     """Extract observations (what actually happened), in commit order.
 
@@ -315,7 +370,7 @@ def observation_timeline(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
             {
                 "seq": record.seq,
                 "host": str(dispatched.get("host", observation.get("host"))),
-                "port": int(dispatched.get("port", observation.get("port", 0))),
+                "port": _as_int(dispatched.get("port", observation.get("port")), 0),
                 "reason": dispatched.get("reason"),
                 "timeout_s": dispatched.get("executed_timeout_s", dispatched.get("timeout_s")),
                 "attempt": dispatched.get("attempt", observation.get("attempt", 1)),
@@ -350,7 +405,7 @@ def decision_timeline(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
         dispatched = dict(record.data.get("dispatched", {}))
         observation = dict(record.data.get("observation", {}))
         scheduled_pair = str(dispatched.get("host", observation.get("host")))
-        scheduled_port = int(dispatched.get("port", observation.get("port", 0)))
+        scheduled_port = _as_int(dispatched.get("port", observation.get("port")), 0)
         rows.append(
             {
                 "seq": record.seq,

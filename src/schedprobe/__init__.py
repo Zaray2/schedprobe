@@ -9,40 +9,40 @@ See ``docs/architecture.md`` for the module map and data flow.
 
 from __future__ import annotations
 
-from .config import ScanConfig, load_config, default_config, config_from_dict, config_to_dict
+from .config import ScanConfig, config_from_dict, config_to_dict, default_config, load_config
 from .engine import ScanEngine, ScanRun
-from .models import PortState, ProbeResult, PlannedProbe, SegmentState, Verdict
 from .errors import (
-    SchedProbeError,
-    ConfigError,
-    TargetValidationError,
-    BudgetError,
-    EvidenceError,
     BackendError,
+    BudgetError,
+    ConfigError,
+    EvidenceError,
     PolicyError,
+    SchedProbeError,
+    TargetValidationError,
 )
+from .models import PlannedProbe, PortState, ProbeResult, SegmentState, Verdict
 
 __version__ = "0.1.0"
 
 __all__ = [
-    "__version__",
-    "ScanConfig",
-    "load_config",
-    "default_config",
-    "config_from_dict",
-    "config_to_dict",
-    "ScanEngine",
-    "ScanRun",
+    "BackendError",
+    "BudgetError",
+    "ConfigError",
+    "EvidenceError",
+    "PlannedProbe",
+    "PolicyError",
     "PortState",
     "ProbeResult",
-    "PlannedProbe",
-    "SegmentState",
-    "Verdict",
+    "ScanConfig",
+    "ScanEngine",
+    "ScanRun",
     "SchedProbeError",
-    "ConfigError",
+    "SegmentState",
     "TargetValidationError",
-    "BudgetError",
-    "EvidenceError",
-    "BackendError",
-    "PolicyError",
+    "Verdict",
+    "__version__",
+    "config_from_dict",
+    "config_to_dict",
+    "default_config",
+    "load_config",
 ]

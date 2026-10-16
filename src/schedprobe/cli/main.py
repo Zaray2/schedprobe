@@ -30,11 +30,13 @@ import os
 import platform
 import statistics
 import sys
+from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 from .. import __version__
-from ..bench import BenchmarkCase, compare, default_case, environment, run_benchmark, write_results
+from ..bench import compare, default_case, environment, run_benchmark, write_results
 from ..config import (
     BACKEND_KINDS,
     PLANNER_KINDS,
@@ -48,12 +50,10 @@ from ..errors import ConfigError, EvidenceError, SchedProbeError
 from ..evidence import (
     MANIFEST_FILENAME,
     decision_timeline,
-    read_records,
     reason_histogram,
     status_to_dict,
     verify_chain,
 )
-from ..models import PortState
 from ..planners import PLANNER_CLASSES
 from ..replay import replay_chain
 from ..reporting import (
@@ -64,6 +64,8 @@ from ..reporting import (
     render_summary,
     render_verify,
     sanitize,
+)
+from ..reporting import (
     write_results as write_scan_results,
 )
 from ..targets import COMMON_PORTS, parse_ports
@@ -81,7 +83,10 @@ from .console import (
     run_async,
 )
 
-__all__ = ["build_parser", "main", "dispatch"]
+if TYPE_CHECKING:
+    from ..engine import ScanRun
+
+__all__ = ["build_parser", "dispatch", "main"]
 
 PROG = "schedprobe"
 
@@ -127,10 +132,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _scan_common(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument("-t", "--target", action="append", dest="targets", metavar="HOST",
-                    help="host, hostname or CIDR (repeatable, comma separated)")
-    sp.add_argument("-p", "--ports", metavar="SPEC",
-                    help=f"ports: '80,443', '1-1024', or a preset (top50|all). default: top50 ({len(COMMON_PORTS)} ports)")
+    sp.add_argument(
+        "-t",
+        "--target",
+        action="append",
+        dest="targets",
+        metavar="HOST",
+        help="host, hostname or CIDR (repeatable, comma separated)",
+    )
+    sp.add_argument(
+        "-p",
+        "--ports",
+        metavar="SPEC",
+        help=(
+            "ports: '80,443', '1-1024', or a preset (top50|all). "
+            f"default: top50 ({len(COMMON_PORTS)} ports)"
+        ),
+    )
     sp.add_argument("-c", "--config", metavar="FILE", help="TOML/JSON config file")
     sp.add_argument("--planner", choices=PLANNER_KINDS, default=None)
     sp.add_argument("--budget", type=int, metavar="UNITS", help="hard probe-cost budget")
@@ -147,30 +165,47 @@ def _scan_common(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--out-dir", metavar="DIR", help="artifact directory (default: runs)")
     sp.add_argument("--label", default="", help="short label stored in the run header")
     sp.add_argument("--notes", default="", help="free-form note stored in the run header")
-    sp.add_argument("--redact", action="store_true",
-                    help="pseudonymise host identifiers in the console table and in result "
-                         "files. NOTE: the evidence log keeps real hosts on purpose - it is "
-                         "the audit record and the replay verifier needs them")
+    sp.add_argument(
+        "--redact",
+        action="store_true",
+        help="pseudonymise host identifiers in the console table and in result "
+        "files. NOTE: the evidence log keeps real hosts on purpose - it is "
+        "the audit record and the replay verifier needs them",
+    )
     sp.add_argument("--format", choices=["table", "json", "jsonl", "csv"], default="table")
     sp.add_argument("--include-closed", action="store_true")
     sp.add_argument("--max-rows", type=int, default=200, help="0 = no limit")
     sp.add_argument("--max-results", type=int, default=0, help="cap rows written to results files")
-    sp.add_argument("--allow-public", action="store_true",
-                    help="permit public address space; only for assets you are authorized to test")
+    sp.add_argument(
+        "--allow-public",
+        action="store_true",
+        help="permit public address space; only for assets you are authorized to test",
+    )
     sp.add_argument("--allow-dns", action="store_true", help="permit hostname targets")
-    sp.add_argument("--authorization", metavar="REF", default="",
-                    help="ticket/engagement reference recorded in the run header for audit")
+    sp.add_argument(
+        "--authorization",
+        metavar="REF",
+        default="",
+        help="ticket/engagement reference recorded in the run header for audit",
+    )
     sp.add_argument("--no-artifacts", action="store_true", help="do not write run artifacts to disk")
 
 
 def _add_scan(sub: argparse._SubParsersAction) -> None:
     sp = sub.add_parser("scan", help="run a probe sweep against validated targets")
     _scan_common(sp)
-    sp.add_argument("--backend", choices=BACKEND_KINDS, default="fake",
-                    help="'real' performs TCP connects; 'fake' uses the simulator")
+    sp.add_argument(
+        "--backend",
+        choices=BACKEND_KINDS,
+        default="fake",
+        help="'real' performs TCP connects; 'fake' uses the simulator",
+    )
     sp.add_argument("--scenario", help="simulation scenario (fake backend)")
-    sp.add_argument("--grab-banner", action="store_true",
-                    help="read-only banner fetch for open ports (real backend, opt-in)")
+    sp.add_argument(
+        "--grab-banner",
+        action="store_true",
+        help="read-only banner fetch for open ports (real backend, opt-in)",
+    )
     sp.set_defaults(func=cmd_scan)
 
 
@@ -189,8 +224,11 @@ def _add_bench(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--scenario", default="blackhole-segment")
     sp.add_argument("--budget", type=int, default=4000)
     sp.add_argument("--seed", type=int, default=1337)
-    sp.add_argument("--planners", default=",".join(("adaptive", "fixed", "random", "fixed-longtimeout")),
-                    help="comma-separated planner names")
+    sp.add_argument(
+        "--planners",
+        default=",".join(("adaptive", "fixed", "random", "fixed-longtimeout")),
+        help="comma-separated planner names",
+    )
     sp.add_argument("--out-dir", default="runs", metavar="DIR")
     sp.add_argument("--format", choices=["table", "json"], default="table")
     sp.add_argument("--save", metavar="FILE", help="write the full result JSON here")
@@ -314,10 +352,7 @@ def _config_from_args(args: argparse.Namespace, *, default_backend: str = "fake"
     config = load_config(getattr(args, "config", None), overrides)
     if getattr(args, "targets", None):
         config.targets = tuple(
-            part.strip()
-            for group in args.targets
-            for part in str(group).split(",")
-            if part.strip()
+            part.strip() for group in args.targets for part in str(group).split(",") if part.strip()
         )
     if getattr(args, "ports", None):
         config.ports = parse_ports(args.ports)
@@ -369,7 +404,7 @@ def cmd_scan(args: argparse.Namespace, emitter: Emitter) -> int:
     return _report_run(run, emitter, args)
 
 
-def _report_run(run, emitter: Emitter, args: argparse.Namespace) -> int:
+def _report_run(run: ScanRun, emitter: Emitter, args: argparse.Namespace) -> int:
     summary = run.summary.to_dict()
     fmt = getattr(args, "format", "table")
     if emitter.json_mode or fmt == "json":
@@ -450,8 +485,10 @@ def cmd_demo(args: argparse.Namespace, emitter: Emitter) -> int:
     emitter.say("")
     emitter.say(render_summary(run.summary.to_dict(), title="step 1/4 scan"))
     emitter.say("")
-    emitter.say(render_run_table(run.results, display_host=run.display_host,
-                                 include_closed=False, max_rows=40), force=True)
+    emitter.say(
+        render_run_table(run.results, display_host=run.display_host, include_closed=False, max_rows=40),
+        force=True,
+    )
 
     status = verify_chain(run.evidence_path)
     emitter.say("")
@@ -555,7 +592,8 @@ def cmd_verify(args: argparse.Namespace, emitter: Emitter) -> int:
 
         actual, _ = file_digest(path)
         payload["manifest_checked"] = (
-            f"{manifest_path.name}: digest matches" if recorded == actual
+            f"{manifest_path.name}: digest matches"
+            if recorded == actual
             else f"{manifest_path.name}: digest MISMATCH (recorded {recorded}, actual {actual})"
         )
         if recorded != actual:
@@ -604,7 +642,8 @@ def cmd_explain(args: argparse.Namespace, emitter: Emitter) -> int:
         except ValueError as exc:
             raise ConfigError("--pair port must be an integer", value=port) from exc
         selected = [
-            row for row in rows
+            row
+            for row in rows
             if (row["host"] == host and int(row["port"]) == wanted)
             or (row.get("next_host") == host and row.get("next_port") == wanted)
         ]
@@ -614,8 +653,7 @@ def cmd_explain(args: argparse.Namespace, emitter: Emitter) -> int:
     refreshed = sum(1 for row in rows if row.get("plan_refreshed"))
     lines = [
         f"[explain] {path}",
-        f"  probes     : {len(rows)}   decisions recorded: {len(rows)}"
-        f"   plan refreshes: {refreshed}",
+        f"  probes     : {len(rows)}   decisions recorded: {len(rows)}   plan refreshes: {refreshed}",
         f"  reasons    : {json.dumps(histogram, sort_keys=True)}",
         "  note       : 'scheduled_reason'/'executed' describe the probe that ran; "
         "'next' is the decision the scheduler recorded for the following probe.",
@@ -674,12 +712,11 @@ def cmd_diff(args: argparse.Namespace, emitter: Emitter) -> int:
 
 def cmd_hostinfo(args: argparse.Namespace, emitter: Emitter) -> int:
     """Measure one host to choose timeouts with evidence instead of folklore."""
-    import asyncio
 
-    from ..backends.real import RealTcpBackend
     from ..backends.base import ProbeRequest
-    from ..targets import expand_targets, validate_targets
+    from ..backends.real import RealTcpBackend
     from ..config import NetworkConfig, SafetyConfig
+    from ..targets import expand_targets, validate_targets
 
     safety = SafetyConfig(allow_public=bool(args.allow_public))
     hosts = expand_targets([args.target], max_hosts=1)
@@ -702,8 +739,9 @@ def cmd_hostinfo(args: argparse.Namespace, emitter: Emitter) -> int:
         for _ in range(max(1, args.samples)):
             for port in ports:
                 result = await backend.probe(
-                    ProbeRequest(host=hosts[0], port=port, timeout_s=args.timeout,
-                                 max_timeout_s=args.timeout)
+                    ProbeRequest(
+                        host=hosts[0], port=port, timeout_s=args.timeout, max_timeout_s=args.timeout
+                    )
                 )
                 samples.append((port, result.cost_units / 1000.0))
                 emitter.say(
@@ -734,18 +772,20 @@ def cmd_hostinfo(args: argparse.Namespace, emitter: Emitter) -> int:
         )
         emitter.say(
             f"  answered {len(answered)}/{len(samples)} probes; "
-            f"median {statistics.median(answered)*1000:.1f} ms, p95 {p95*1000:.1f} ms"
+            f"median {statistics.median(answered) * 1000:.1f} ms, p95 {p95 * 1000:.1f} ms"
         )
         emitter.say(
             "  suggested: "
-            f"--base-timeout {recommendation:.2f} --min-timeout {max(0.15, recommendation/4):.2f} "
+            f"--base-timeout {recommendation:.2f} --min-timeout {max(0.15, recommendation / 4):.2f} "
             f"--max-timeout {ceiling:.2f}"
         )
         emitter.say("  (the recommendation is 3x the observed p95 round trip, capped at 4x p95)")
     else:
         payload.update({"answered": 0, "recommended_base_timeout_s": None})
-        emitter.say("  no probe was answered; the path may be filtered. Keep a larger timeout and "
-                    "let the planner prune instead.")
+        emitter.say(
+            "  no probe was answered; the path may be filtered. Keep a larger timeout and "
+            "let the planner prune instead."
+        )
     if emitter.json_mode:
         emitter.data(payload)
     return EXIT_OK
@@ -768,8 +808,11 @@ def cmd_config(args: argparse.Namespace, emitter: Emitter) -> int:
     if action == "validate":
         config = load_config(args.path)
         config.validate()
-        emitter.say(f"OK {args.path}: {len(config.targets)} targets, {len(config.ports)} ports, "
-                    f"planner={config.planner.kind}, budget={config.planner.cost_budget}", force=True)
+        emitter.say(
+            f"OK {args.path}: {len(config.targets)} targets, {len(config.ports)} ports, "
+            f"planner={config.planner.kind}, budget={config.planner.cost_budget}",
+            force=True,
+        )
         if emitter.json_mode:
             emitter.data(config_to_dict(config))
         return EXIT_OK
@@ -862,15 +905,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_stdio()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    emitter = Emitter(quiet=bool(getattr(args, "quiet", False)), json_mode=bool(getattr(args, "json_mode", False)))
+    emitter = Emitter(
+        quiet=bool(getattr(args, "quiet", False)),
+        json_mode=bool(getattr(args, "json_mode", False)),
+    )
     configure_logging(getattr(args, "log_level", "WARNING"))
     try:
         return dispatch(args, emitter)
     except BrokenPipeError:  # pragma: no cover - piping into head/less
-        try:
+        with suppress(Exception):
             sys.stdout.close()
-        except Exception:
-            pass
         return EXIT_OK
     except SchedProbeError as exc:
         emitter.error(format_error(exc))
@@ -880,7 +924,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover - interactive
         emitter.error("interrupted")
         return 130
-    except Exception as exc:  # noqa: BLE001 - last line of defence; reported, never hidden
+    except Exception as exc:
         emitter.error("internal error: " + format_error(exc))
         print(internal_traceback(exc), file=sys.stderr)
         return EXIT_INTERNAL
