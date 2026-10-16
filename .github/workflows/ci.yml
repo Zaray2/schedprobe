@@ -63,6 +63,26 @@ jobs:
       - name: Unit tests (stdlib unittest)
         run: python -m unittest discover -s tests -t . -v
 
+      - name: Evidence tiers of the suite
+        # Prints how many tests can actually falsify a belief (oracle), how many guard a
+        # consumer-facing interface (contract), and how many only check the code against
+        # its own documentation (consistency). It is here so that a reviewer sees the
+        # number on every run rather than reading a claim about it in a README.
+        run: python scripts/test_tiers.py
+
+      - name: Network condition tests must actually run, not skip
+        # tests/test_netem.py injects packet loss and delay through a network namespace and
+        # `tc netem`. It is the only real-socket coverage for the FILTERED path, and on a
+        # Linux runner with root it has no excuse to skip - a silent skip would make a
+        # green build mean nothing, which is worse than a red one. So the skip is turned
+        # into a failure here rather than being left to look like success.
+        run: |
+          python -m unittest tests.test_netem -v 2>&1 | tee netem.log
+          if grep -q "skipped" netem.log; then
+            echo "::error::the injected-loss tests skipped on a Linux runner, so the FILTERED path is untested by this build"
+            exit 1
+          fi
+
       - name: Ruff lint
         run: ruff check .
 
