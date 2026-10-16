@@ -406,11 +406,16 @@ OK   replay: demo-blackhole-segment-seed1337 (planner=adaptive)
    默认 `False`）。伪名在同一 run 内一致、跨 run 不可关联。
    （用例 `tests/test_reporting_cli.py::TestCliContract::test_redacted_scan_hides_the_host_in_artifacts`
    名字虽含 "in artifacts"，实际只断言了 `results.json`。）
-5. **剪枝在「段内绝大多数存活」的场景会牺牲召回**。默认 `prune_mode = defer` 只把可疑段降权沉底
-   （`deferred_penalty = 2.0`），已经是最保守的选项；`drop` 会直接丢 pair。公开基准里
-   `wide-sweep@60000`（3 主机 × 1024 端口、绝大多数 filtered）adaptive 的 recall 是 33.3%，
-   而 `fixed` 是 66.7%——即**自适应策略在该场景输给固定顺序**（数据见
-   `docs/research/benchmark-raw.json` 的 `headline`）。
+5. **`wide-sweep` 上自适应更差，但这个数字撑不起关于策略的结论。** 该场景 adaptive recall
+   33.3%、`fixed` 66.7%。看起来是剪枝的锅，但**实验已证伪**：关掉剪枝 / 延迟剪枝 / 提高最小
+   样本量，召回率一个字节都没变（剪枝在该场景几乎不触发）；覆盖缺口对每个策略都是 ~2900/3072，
+   由预算上限而非策略造成。真正的原因是**该场景只有 3 个开放端口，且全在同一主机的 3 个最低
+   端口上**——67% 与 33% 就是"命中 2 个"与"命中 1 个"。
+   把开放端口数提高到可测量量级（24–36 个，轮转分布在多台主机上）后，adaptive 在 4 组配置上
+   以 **75–100% 对 0–12.5%** 胜出，6 种子极差 0.0%。完整数据与复现命令见
+   [`docs/research/adaptive-analysis.md`](docs/research/adaptive-analysis.md)。
+   **本次调查没有修改任何调度算法**——证据不支持，剪枝不是原因。修的是基准的分辨率。
+
 6. **预算预留现在是"阶段式"生效的。** `reserved_ratio` 的生效方式：扫描阶段的上限是
    `budget − reserved_allowance`，一旦有确认探测被决定，上限放开到完整 `budget`
    （`engine._has_headroom` / `frontier.CostLedger.sweep_cap`）。这在实测中会改变结果：同一场景

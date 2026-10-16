@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .backends.fake import FakeBackend, NetworkScenario, builtin_scenarios
+from .backends.fake import FakeBackend, NetworkScenario, builtin_scenarios, scenario_from_dict
 from .config import NetworkConfig, PlannerConfig, ScanConfig
 from .engine import ScanEngine
 from .errors import ConfigError
@@ -44,12 +44,16 @@ __all__ = [
     "BenchmarkCase",
     "BenchmarkResult",
     "BudgetSweepRow",
+    "RepeatResult",
     "all_cases",
     "budget_sweep",
     "compare",
     "default_case",
+    "dense_sweep_scenario",
     "environment",
+    "repeat_case",
     "run_benchmark",
+    "scenario_from_dict",
     "write_results",
 ]
 
@@ -239,13 +243,24 @@ def _config_for(case: BenchmarkCase, planner: str) -> ScanConfig:
     ).validate()
 
 
-async def run_benchmark(case: BenchmarkCase, out_dir: str | Path) -> list[BenchmarkResult]:
-    """Run every planner in ``case`` against the same scenario and collect metrics."""
+async def run_benchmark(
+    case: BenchmarkCase,
+    out_dir: str | Path,
+    *,
+    scenario: NetworkScenario | None = None,
+) -> list[BenchmarkResult]:
+    """Run every planner in ``case`` against the same scenario and collect metrics.
+
+    ``scenario`` overrides the built-in catalogue. Generated scenarios are built by
+    :func:`dense_sweep_scenario`, so they have no name to look up - passing the object
+    is what makes the parameter sweep usable without editing the catalogue.
+    """
     case.validate()
-    catalog: dict[str, NetworkScenario] = builtin_scenarios()
-    if case.scenario not in catalog:
-        raise ConfigError("unknown benchmark scenario", scenario=case.scenario, known=sorted(catalog))
-    scenario = catalog[case.scenario]
+    if scenario is None:
+        catalog: dict[str, NetworkScenario] = builtin_scenarios()
+        if case.scenario not in catalog:
+            raise ConfigError("unknown benchmark scenario", scenario=case.scenario, known=sorted(catalog))
+        scenario = catalog[case.scenario]
     truth = scenario.ground_truth(case.hosts, case.ports)
     totals = {
         "open": sum(1 for state in truth.values() if state is PortState.OPEN),
@@ -418,6 +433,170 @@ def write_results(path: str | Path, payload: Mapping[str, Any]) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return target
+
+
+def dense_sweep_scenario(  # noqa: PLR0913 - a scenario is defined by these knobs
+    *,
+    hosts: int = 8,
+    ports: int = 1024,
+    opens_per_host: int = 3,
+    base: str = "10.60",
+    hosts_per_segment: int = 8,
+    latency_ms: tuple[int, int] = (1, 3),
+    loss_rate: float = 0.0,
+    dead_fraction: float = 0.25,
+) -> NetworkScenario:
+    """Build a wide sweep with enough open ports to measure recall with any resolution.
+
+    ``wide-sweep`` - the scenario the published results use - has **three** open ports
+    across 3072 pairs, all three on the same host at the lowest port numbers. Comparing
+    recall there means comparing 1/3 against 2/3: one port of difference, which is not a
+    measurement, it is a coin flip. It is kept as-is because it is an honest example of a
+    budget-starved sweep, but a claim about which policy schedules better needs more
+    signal than that.
+
+    This builder makes the signal adjustable. Open ports are distributed round-robin
+    across hosts so that ``opens_per_host`` opens land on *different* hosts; that matters
+    because a policy that discovers one responsive host quickly should then be rewarded
+    for finding the others, which is precisely the behaviour ``wide-sweep`` cannot show.
+
+    ``dead_fraction`` of the hosts are made entirely unreachable, so a scenario can be
+    swept across the spectrum from "all hosts answer" to "one host in ten answers"
+    without editing this function.
+    """
+    if hosts < 1 or ports < 1 or opens_per_host < 0:
+        raise ConfigError("dense_sweep_scenario needs positive host/port counts")
+    if not 0.0 <= dead_fraction <= 1.0:
+        raise ConfigError("dead_fraction must be within [0, 1]")
+
+    if hosts_per_segment < 1:
+        raise ConfigError("hosts_per_segment must be positive")
+    dead = round(hosts * dead_fraction)
+    rules: dict[str, dict[str, Any]] = {}
+    for index in range(hosts):
+        # Real /24 structure: ``segment_of`` groups by prefix, so spreading the hosts over
+        # several subnets is what makes the segment-level policy observable at all.
+        segment, offset = divmod(index, hosts_per_segment)
+        address = f"{base}.{segment}.{offset + 1}"
+        if index < dead:
+            rules[address] = {"unreachable": True}
+            continue
+        # Round-robin: port p belongs to the live host at offset (p-1) % live_hosts, so the
+        # first `live_hosts` opens are on `live_hosts` different hosts. A policy that
+        # discovers one responsive host and then generalises gets rewarded; a scenario that
+        # puts every open port on one host cannot show that, which is exactly wide-sweep.
+        live_hosts = max(1, hosts - dead)
+        live_index = index - dead
+        chosen = [
+            port
+            for port in range(1, opens_per_host * live_hosts + 1)
+            if (port - 1) % live_hosts == live_index
+        ]
+        rules[address] = {"ports": {str(port): "open" for port in chosen}, "default": "filtered"}
+
+    return NetworkScenario(
+        name=f"dense-sweep-{hosts}x{ports}-dead{dead}",
+        hosts=rules,
+        loss_rate=loss_rate,
+        latency_ms=latency_ms,
+        description=(
+            f"{hosts} hosts x {ports} ports over "
+            f"{max(1, -(-hosts // hosts_per_segment))} segments, {dead} entirely "
+            f"unreachable, {opens_per_host} open ports per live host"
+        ),
+    )
+
+
+@dataclass(slots=True)
+class RepeatResult:
+    """One planner's outcome over several seeds, so an effect can be told from noise."""
+
+    planner: str
+    seeds: tuple[int, ...]
+    recalls: tuple[float, ...]
+
+    @property
+    def mean_recall(self) -> float:
+        return sum(self.recalls) / len(self.recalls) if self.recalls else 0.0
+
+    @property
+    def min_recall(self) -> float:
+        return min(self.recalls) if self.recalls else 0.0
+
+    @property
+    def max_recall(self) -> float:
+        return max(self.recalls) if self.recalls else 0.0
+
+    @property
+    def spread(self) -> float:
+        """Width of the observed recall range - the resolution the claim is limited by."""
+        return self.max_recall - self.min_recall
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "planner": self.planner,
+            "seeds": list(self.seeds),
+            "recalls": list(self.recalls),
+            "mean_recall": round(self.mean_recall, 4),
+            "min_recall": round(self.min_recall, 4),
+            "max_recall": round(self.max_recall, 4),
+            "spread": round(self.spread, 4),
+        }
+
+
+def synthetic_case(  # noqa: PLR0913 - mirrors BenchmarkCase's identifying fields
+    scenario: NetworkScenario,
+    ports: Sequence[int],
+    budget: int,
+    *,
+    planners: Sequence[str] = DEFAULT_PLANNERS,
+    seed: int = 1337,
+    prune_mode: str = "defer",
+) -> BenchmarkCase:
+    """Wrap a generated scenario in a benchmark case."""
+    return BenchmarkCase(
+        scenario=scenario.name,
+        hosts=tuple(sorted(scenario.hosts)),
+        ports=tuple(ports),
+        budget=budget,
+        seed=seed,
+        planners=tuple(planners),
+        prune_mode=prune_mode,
+    )
+
+
+async def repeat_case(
+    scenario: NetworkScenario,
+    case: BenchmarkCase,
+    seeds: Sequence[int],
+    out_dir: str | Path,
+) -> list[RepeatResult]:
+    """Run ``case`` once per seed and group the outcomes by planner.
+
+    A single deterministic run tells you what one schedule did; it does not tell you
+    whether a policy is better, because the per-run variance of a budget-starved sweep is
+    large. Repeating over seeds and reporting the spread is what makes the difference
+    between "adaptive scored lower" and "adaptive is worse".
+    """
+    collected: dict[str, list[float]] = {planner: [] for planner in case.planners}
+    base = Path(out_dir)
+    for seed in seeds:
+        variant = BenchmarkCase(
+            scenario=case.scenario,
+            hosts=case.hosts,
+            ports=case.ports,
+            budget=case.budget,
+            seed=seed,
+            planners=case.planners,
+            prefix_len=case.prefix_len,
+            prune_mode=case.prune_mode,
+        )
+        for result in await run_benchmark(variant, base, scenario=scenario):
+            collected[result.planner].append(result.recall)
+    return [
+        RepeatResult(planner=planner, seeds=tuple(seeds), recalls=tuple(recalls))
+        for planner, recalls in collected.items()
+    ]
 
 
 def environment() -> dict[str, Any]:
