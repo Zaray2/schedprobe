@@ -71,15 +71,17 @@ jobs:
         run: python scripts/test_tiers.py
 
       - name: Network condition tests must actually run, not skip
-        # tests/test_netem.py injects packet loss and delay through a network namespace and
-        # `tc netem`. It is the only real-socket coverage for the FILTERED path, and on a
-        # Linux runner with root it has no excuse to skip - a silent skip would make a
-        # green build mean nothing, which is worse than a red one. So the skip is turned
-        # into a failure here rather than being left to look like success.
+        # tests/test_netem.py injects packet loss so the FILTERED path has real-socket
+        # coverage. It tries a network namespace with `tc netem` first and falls back to an
+        # iptables DROP rule on a loopback port. On a Linux runner one of the two should
+        # work; if neither does, the build goes red with the measured reason rather than
+        # green, because a silent skip would make this look covered when it is not.
         run: |
           python -m unittest tests.test_netem -v 2>&1 | tee netem.log
           if grep -q "skipped" netem.log; then
-            echo "::error::the injected-loss tests skipped on a Linux runner, so the FILTERED path is untested by this build"
+            echo "::error::injected-loss tests skipped. Reason follows:"
+            grep -o "skipped .*" netem.log | head -1
+            echo "::error::$(grep -o "skipped .*" netem.log | head -1)"
             exit 1
           fi
 

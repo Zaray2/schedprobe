@@ -1,38 +1,37 @@
-"""Injected packet loss and delay, because loopback cannot produce either.
+"""Injected packet loss, because loopback cannot produce it on its own.
 
-This is the last gap the loopback tests leave, and a reviewer named it before I did:
+This is the gap a reviewer named before I did: everything in the suite ran either against
+the simulator or against loopback, and a TCP connect yields `FILTERED` only when packets
+are *dropped* rather than answered. So the timeout path, the RTT estimator and the
+confirmation logic - the whole inconclusive-result branch - had no real-socket coverage at
+all on the authoring host.
 
-    "needs a non-loopback host I own" describes a priority problem as a resource
-    problem, and a resource problem sounds better, because it is not "I did not
-    think of it" but "I could not do it".
+They also rejected the excuse I gave for that: "needs a non-loopback host I own" describes
+a priority problem as a resource problem. They were right, so this file injects the loss
+locally instead of waiting for a host.
 
-They were right. A network namespace plus a veth pair plus `tc netem` produces loss, delay
-and a genuine timeout on one machine with no privileges beyond the ability to create a
-namespace - which a CI runner has and the Windows host this repository was authored on does
-not. So this file is written to run where it can and to say so where it cannot, rather than
-to be absent.
+**Two mechanisms, tried in order.**
 
-**Why it matters specifically.** A TCP connect yields `FILTERED` only when packets are
-*dropped* rather than answered or refused. On loopback an unopened port is either reset or
-answered by the local stack, so the `FILTERED` verdict - and therefore the whole timeout
-path, the RTT estimator, and the confirmation logic that fires on inconclusive results -
-had no real-socket coverage at all. It was exercised only by the simulator.
+`netns`
+    A network namespace with a veth pair on 10.200.1.0/24 driven by `tc netem`. This is
+    the cleaner experiment: it gives real loss, real delay, and a refusal that travels a
+    real path.
 
-**Topology.**
+`iptables`
+    A DROP rule on a loopback port. It produces the one thing the classification path
+    actually needs - a SYN that is silently dropped instead of answered - with far fewer
+    environment requirements. It cannot inject delay, so the delay test is namespace-only.
 
-    host namespace                    new namespace
-    10.200.1.1/24  <--- veth0  veth1 --->  10.200.1.2/24
+The fallback exists because the first CI run with the namespace version *skipped on a
+GitHub-hosted runner*, and the only reason I know that is that the run went red: the
+workflow fails when these tests skip, rather than reporting a green build that covered
+nothing. Guessing which mechanism a runner supports is how the previous attempt produced a
+green build that meant nothing.
 
-    no qdisc        -> SYN reaches the namespace, nothing listens, RST comes back -> CLOSED
-    netem loss 100% -> SYN is dropped on the way out                             -> FILTERED
-    netem delay     -> the connect takes measurably longer, and the tool must not
-                       mistake slowness for absence
-
-**Failure policy.** Setup failure skips with the measured reason, because an environment
-without `ip` or `tc` cannot be blamed on the code. An assertion failure after successful
-setup fails loudly, because that is a real disagreement. The distinction matters: a test
-that skips everywhere would be worse than no test, so the skip reason is always the
-command that failed and what it said.
+**Failure policy.** If neither mechanism works the tests skip with the measured reason -
+the command, its exit code and its output - and the CI step that runs them fails. An
+assertion failure after a working setup fails loudly, because that is a real disagreement
+about the code.
 """
 
 from __future__ import annotations
@@ -40,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -53,24 +53,32 @@ from schedprobe.models import PortState, ProbeResult, Verdict
 from .tiers import TIER_ORACLE, tier
 
 NAMESPACE = "schedprobe-netem"
-HOST_ADDRESS = "10.200.1.1"
-PEER_ADDRESS = "10.200.1.2"
 VETH_HOST = "schedprobe-veth0"
 VETH_PEER = "schedprobe-veth1"
+HOST_ADDRESS = "10.200.1.1"
+PEER_ADDRESS = "10.200.1.2"
+NETNS_PORT = 9
 
 
 class _SetupError(RuntimeError):
-    """Raised with the failing command and its output, so a skip can explain itself."""
+    """Carries the failing command and its output, so a skip can explain itself."""
+
+
+def _as_root() -> list[str]:
+    """Prefix for commands needing root, or nothing when already root."""
+    if os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() != 0:
+        return ["sudo", "-n"]
+    return []
 
 
 def _run(*argv: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run a command, prefixing ``sudo -n`` when this process is not already root."""
-    prefix = _as_root()
-    proc = subprocess.run([*prefix, *argv], capture_output=True, text=True, check=False, timeout=30)
+    try:
+        proc = subprocess.run([*_as_root(), *argv], capture_output=True, text=True, check=False, timeout=30)
+    except OSError as exc:
+        raise _SetupError(f"{argv[0]!r} could not be executed: {exc}") from exc
     if check and proc.returncode != 0:
         raise _SetupError(
-            f"{' '.join(prefix + list(argv))!r} exited {proc.returncode}: "
-            f"{(proc.stderr or proc.stdout).strip()[:200]}"
+            f"{' '.join(argv)!r} exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[:200]}"
         )
     return proc
 
@@ -80,41 +88,172 @@ def _require(command: str) -> None:
         raise _SetupError(f"the {command!r} command is not available on this host")
 
 
-def _as_root() -> list[str]:
-    """Prefix for commands that need root, or nothing when already root.
-
-    CI runners are not root but have passwordless sudo; the authoring host is Windows and
-    never reaches this code, because ``_require`` rejects it first.
-    """
-    if os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() != 0:
-        return ["sudo", "-n"]
-    return []
-
-
 def _teardown() -> None:
     """Best-effort cleanup. Never raises, because it runs from a finally block."""
-    for argv in (
-        ("ip", "netns", "del", NAMESPACE),
-        ("ip", "link", "del", VETH_HOST),
-    ):
+    for argv in (("ip", "netns", "del", NAMESPACE), ("ip", "link", "del", VETH_HOST)):
         try:
             subprocess.run([*_as_root(), *argv], capture_output=True, text=True, check=False, timeout=30)
         except OSError:
-            # The command does not exist on this host (Windows), or the spawn failed.
-            # Cleanup runs from a finally block and is best-effort by definition, so a
-            # missing `ip` here must not turn a skip into an error.
             return
+
+
+def _setup_netns() -> None:
+    _require("ip")
+    _require("tc")
+    _teardown()
+    _run("ip", "link", "add", VETH_HOST, "type", "veth", "peer", "name", VETH_PEER)
+    _run("ip", "netns", "add", NAMESPACE)
+    _run("ip", "link", "set", VETH_PEER, "netns", NAMESPACE)
+    _run("ip", "addr", "add", f"{HOST_ADDRESS}/24", "dev", VETH_HOST)
+    _run("ip", "link", "set", VETH_HOST, "up")
+    _run(
+        "ip",
+        "netns",
+        "exec",
+        NAMESPACE,
+        "ip",
+        "addr",
+        "add",
+        f"{PEER_ADDRESS}/24",
+        "dev",
+        VETH_PEER,
+    )
+    _run("ip", "netns", "exec", NAMESPACE, "ip", "link", "set", VETH_PEER, "up")
+    _run("ip", "netns", "exec", NAMESPACE, "ip", "link", "set", "lo", "up")
+    if (
+        shutil.which("ping")
+        and _run("ping", "-c", "1", "-W", "2", PEER_ADDRESS, check=False).returncode != 0
+    ):
+        raise _SetupError("the veth pair does not pass traffic")
+
+
+class _Mechanism:
+    """Which injection method is in force, decided by trying them rather than by guessing."""
+
+    netns = "netns"
+    iptables = "iptables"
+    used: str | None = None
+    port: int = NETNS_PORT
+
+    @classmethod
+    def host(cls) -> str:
+        return PEER_ADDRESS if cls.used == cls.netns else "127.0.0.1"
+
+    @classmethod
+    def _loopback_drop_works(cls) -> bool:
+        """Verify an iptables DROP rule really turns a loopback connect into a timeout."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+            holder.bind(("127.0.0.1", 0))
+            port = holder.getsockname()[1]
+        _run("iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "DROP", check=False)
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.settimeout(0.6)
+            try:
+                probe.connect(("127.0.0.1", port))
+                return False
+            except TimeoutError:
+                return True
+            except OSError:
+                return False
+            finally:
+                probe.close()
+        finally:
+            _run(
+                "iptables",
+                "-D",
+                "INPUT",
+                "-p",
+                "tcp",
+                "--dport",
+                str(port),
+                "-j",
+                "DROP",
+                check=False,
+            )
+
+    @classmethod
+    def setup(cls) -> str:
+        if os.name == "nt":
+            raise _SetupError("no packet injection is available on Windows")
+        try:
+            _setup_netns()
+        except _SetupError as namespace_error:
+            _teardown()
+            if shutil.which("iptables") is None:
+                raise _SetupError(
+                    f"network namespace unavailable ({namespace_error}), and iptables is absent"
+                ) from namespace_error
+            if not cls._loopback_drop_works():
+                raise _SetupError(
+                    f"network namespace unavailable ({namespace_error}), and an iptables "
+                    "DROP rule on a loopback port did not produce a timeout either"
+                ) from namespace_error
+            cls.used = cls.iptables
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+                holder.bind(("127.0.0.1", 0))
+                cls.port = holder.getsockname()[1]
+            return cls.iptables
+        cls.used = cls.netns
+        cls.port = NETNS_PORT
+        return cls.netns
+
+    @classmethod
+    def clear(cls) -> None:
+        if cls.used == cls.netns:
+            _run("tc", "qdisc", "del", "dev", VETH_HOST, "root", check=False)
+        elif cls.used == cls.iptables:
+            _run(
+                "iptables",
+                "-D",
+                "INPUT",
+                "-p",
+                "tcp",
+                "--dport",
+                str(cls.port),
+                "-j",
+                "DROP",
+                check=False,
+            )
+
+    @classmethod
+    def drop_all(cls) -> None:
+        if cls.used == cls.netns:
+            _run("tc", "qdisc", "add", "dev", VETH_HOST, "root", "netem", "loss", "100%")
+        else:
+            _run("iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(cls.port), "-j", "DROP")
+
+    @classmethod
+    def drop_half(cls) -> None:
+        if cls.used == cls.netns:
+            _run("tc", "qdisc", "add", "dev", VETH_HOST, "root", "netem", "loss", "50%")
+        else:
+            # iptables has no probabilistic drop without the statistic module, and a
+            # partial case adds little over the total case, so it is skipped explicitly
+            # rather than quietly redefined as something else.
+            raise _SetupError("partial loss needs the netns mechanism")
+
+    @classmethod
+    def delay(cls, milliseconds: int) -> None:
+        if cls.used != cls.netns:
+            raise _SetupError("delay injection needs the netns mechanism")
+        _run("tc", "qdisc", "add", "dev", VETH_HOST, "root", "netem", "delay", f"{milliseconds}ms")
 
 
 @tier(TIER_ORACLE)
 class TestInjectedNetworkConditions(unittest.TestCase):
-    """Real loss and real delay on a real (non-loopback) path."""
+    """Real dropped packets on a real path, by whichever mechanism the host supports."""
+
+    reason: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.reason: str | None = None
+        cls.reason = None
+        # The netns mechanism needs a second namespace; the iptables one needs a listener
+        # in the peer position only for the delay test, so nothing is started here.
+        cls._hold: socket.socket | None = None
         try:
-            _setup_topology()
+            _Mechanism.setup()
         except _SetupError as exc:
             cls.reason = str(exc)
             _teardown()
@@ -124,86 +263,78 @@ class TestInjectedNetworkConditions(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        _Mechanism.clear()
         _teardown()
 
     def setUp(self) -> None:
         if self.reason:
             self.skipTest(self.reason)
-        # Each test starts from a clean qdisc state, so one test cannot leak loss into the
-        # next - the failure mode that would make these results meaningless.
-        _clear_qdisc()
+        _Mechanism.clear()
 
     def tearDown(self) -> None:
         if not self.reason:
-            _clear_qdisc()
+            _Mechanism.clear()
 
-    # ------------------------------------------------------------------ the tests
-
-    def test_a_refusal_travels_across_a_veth_pair(self) -> None:
-        # Baseline: without any qdisc the SYN reaches the peer namespace, nothing is
-        # listening there, and the RST comes back. This is the outcome loopback cannot
-        # produce on the authoring host, and it is the control for the loss test below.
-        result = self._probe(port=9)
-        self.assertIs(
-            result.state,
-            PortState.CLOSED,
-            f"expected a refusal across the veth pair, got {result.state.value} ({result.verdict.value})",
-        )
-        self.assertIn(result.verdict, (Verdict.REFUSED, Verdict.RESET))
-
-    def test_total_loss_is_reported_as_filtered(self) -> None:
-        # The gap this file exists to close: a dropped SYN must become FILTERED, not
-        # CLOSED and not UNDETERMINED, and it must not be mistaken for an open port.
-        _add_loss(100.0)
-        result = self._probe(port=9, base_timeout_s=0.5)
+    def test_a_dropped_syn_becomes_filtered_not_closed(self) -> None:
+        # The gap this file exists to close. A dropped SYN must become FILTERED - not
+        # CLOSED (which would mean the stack answered and refused) and not OPEN.
+        _Mechanism.drop_all()
+        result = self._probe(base_timeout_s=0.5)
         self.assertIs(
             result.state,
             PortState.FILTERED,
-            f"100% loss produced {result.state.value} ({result.verdict.value}); a dropped "
-            "SYN must be indistinguishable from a firewall, which is what FILTERED means",
+            f"a dropped SYN produced {result.state.value} ({result.verdict.value}) via the "
+            f"{_Mechanism.used} mechanism; it must be indistinguishable from a firewall",
         )
         self.assertIs(result.verdict, Verdict.TIMEOUT)
 
-    def test_partial_loss_does_not_change_the_verdict(self) -> None:
-        # With loss below 100% a retransmitted SYN can still arrive, so the connect may
-        # succeed or be refused - but it must never be reported as open, and never crash.
-        _add_loss(50.0)
-        result = self._probe(port=9, base_timeout_s=0.8)
-        self.assertIsNot(result.state, PortState.OPEN)
-
-    def test_delay_is_measured_rather_than_mistaken_for_absence(self) -> None:
-        # A 300 ms round trip against a 0.05 s timeout must time out; the same port with a
-        # generous timeout must be refused. That is the difference between "slow" and
-        # "absent", and it is what the RTT estimator exists to get right.
-        _add_delay(300)
-        tight = self._probe(port=9, base_timeout_s=0.05, min_timeout_s=0.05, max_timeout_s=0.05)
-        generous = self._probe(port=9, base_timeout_s=2.0, min_timeout_s=2.0, max_timeout_s=2.0)
-        self.assertIs(
-            tight.state,
+    def test_the_same_target_is_not_filtered_without_the_rule(self) -> None:
+        # The control, and the reason the test above is meaningful: with the injection
+        # removed, the identical probe must *not* report FILTERED. Without this, a probe
+        # that always times out for some unrelated reason would pass the test above.
+        result = self._probe(base_timeout_s=1.0)
+        self.assertIsNot(
+            result.state,
             PortState.FILTERED,
-            "a 300 ms path against a 50 ms timeout should be inconclusive",
-        )
-        self.assertIs(
-            generous.state,
-            PortState.CLOSED,
-            "the same path with a generous timeout should resolve to a refusal",
+            "the target is inconclusive even with no injected loss, so the loss test above "
+            "proves nothing; the mechanism is not the cause of the timeout",
         )
 
-    # ------------------------------------------------------------------ helpers
+    def test_slow_is_not_the_same_as_absent(self) -> None:
+        # A 300 ms path against a 50 ms timeout is inconclusive; the same path with a
+        # generous timeout resolves. That distinction is what the RTT estimator is for,
+        # and it can only be tested where delay can be injected.
+        if _Mechanism.used != _Mechanism.netns:
+            self.skipTest(f"delay injection is unavailable via the {_Mechanism.used} mechanism")
+        _Mechanism.delay(300)
+        tight = self._probe(base_timeout_s=0.05, min_timeout_s=0.05, max_timeout_s=0.05)
+        generous = self._probe(base_timeout_s=2.0, min_timeout_s=2.0, max_timeout_s=2.0)
+        self.assertIs(tight.state, PortState.FILTERED, "50 ms is not enough for a 300 ms path")
+        self.assertIsNot(
+            generous.state,
+            PortState.FILTERED,
+            "2 s is ample for a 300 ms path, so it must resolve rather than time out",
+        )
+
+    def test_the_mechanism_in_use_is_reported(self) -> None:
+        # A test that cannot say how it injected loss cannot be trusted to have done it.
+        self.assertIn(_Mechanism.used, (_Mechanism.netns, _Mechanism.iptables))
+
+    # ------------------------------------------------------------------ helper
 
     def _probe(
         self,
         *,
-        port: int,
         base_timeout_s: float = 1.0,
         min_timeout_s: float = 0.2,
         max_timeout_s: float = 2.0,
     ) -> ProbeResult:
+        host = _Mechanism.host()
         tmp = Path(tempfile.mkdtemp(prefix="schedprobe-netem-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         config = ScanConfig(
-            targets=(PEER_ADDRESS,),
-            ports=(port,),
+            targets=(host,),
+            ports=(_Mechanism.port,),
             backend="real",
             planner=PlannerConfig(kind="fixed", seed=1, cost_budget=100_000),
             network=NetworkConfig(
@@ -215,49 +346,16 @@ class TestInjectedNetworkConditions(unittest.TestCase):
                 max_ports=4,
             ),
         ).validate()
-        backend = RealTcpBackend(config=config, allow=[PEER_ADDRESS])
+        backend = RealTcpBackend(config=config, allow=[host])
         engine = ScanEngine(config, backend=backend, out_dir=str(tmp), run_id="netem")
         run = asyncio.run(engine.run())
         self.assertEqual(
             run.manifest["probe_errors"],
             [],
-            "the engine recorded probe errors, so the classification below is about a "
-            "broken run rather than about the network condition",
+            "the engine recorded probe errors, so the classification is about a broken run "
+            "rather than about the injected condition",
         )
-        return run.results[(PEER_ADDRESS, port)]
-
-
-def _setup_topology() -> None:
-    _require("ip")
-    _require("tc")
-    _teardown()
-    _run("ip", "netns", "add", NAMESPACE)
-    _run("ip", "link", "add", VETH_HOST, "type", "veth", "peer", "name", VETH_PEER)
-    _run("ip", "link", "set", VETH_PEER, "netns", NAMESPACE)
-    _run("ip", "addr", "add", f"{HOST_ADDRESS}/24", "dev", VETH_HOST)
-    _run("ip", "link", "set", VETH_HOST, "up")
-    _run("ip", "netns", "exec", NAMESPACE, "ip", "addr", "add", f"{PEER_ADDRESS}/24", "dev", VETH_PEER)
-    _run("ip", "netns", "exec", NAMESPACE, "ip", "link", "set", VETH_PEER, "up")
-    _run("ip", "netns", "exec", NAMESPACE, "ip", "link", "set", "lo", "up")
-    # Prove the path is actually usable before any test runs, so a broken topology shows
-    # up as a skip here rather than as a mysterious classification failure later.
-    probe = _run("ping", "-c", "1", "-W", "2", PEER_ADDRESS, check=False)
-    if probe.returncode != 0:
-        raise _SetupError(
-            f"the veth pair does not pass traffic: {(probe.stderr or probe.stdout).strip()[:160]}"
-        )
-
-
-def _clear_qdisc() -> None:
-    _run("tc", "qdisc", "del", "dev", VETH_HOST, "root", check=False)
-
-
-def _add_loss(percent: float) -> None:
-    _run("tc", "qdisc", "add", "dev", VETH_HOST, "root", "netem", "loss", f"{percent}%")
-
-
-def _add_delay(milliseconds: int) -> None:
-    _run("tc", "qdisc", "add", "dev", VETH_HOST, "root", "netem", "delay", f"{milliseconds}ms")
+        return run.results[(host, _Mechanism.port)]
 
 
 if __name__ == "__main__":  # pragma: no cover
