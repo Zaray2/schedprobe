@@ -46,7 +46,6 @@ __all__ = [
     "EXIT_INTERRUPTED",
     "EXIT_OK",
     "EXIT_REPLAY",
-    "EXIT_UNAVAILABLE",
     "EXIT_USAGE",
     "Emitter",
     "configure_stdio",
@@ -61,7 +60,6 @@ EXIT_INTERNAL = 1
 EXIT_USAGE = 2
 EXIT_EVIDENCE = 3
 EXIT_REPLAY = 4
-EXIT_UNAVAILABLE = 5
 EXIT_INTERRUPTED = 130
 
 # Characters the renderer emits that are not ASCII (arguments, labels and ports
