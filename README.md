@@ -15,9 +15,18 @@ $ python -m schedprobe verify runs/<run>      # 链是否完整
 $ python -m schedprobe replay runs/<run>/evidence.jsonl --strict   # 调度能否被重放
 ```
 
-上面这段是**真实 socket 测量**（不是仿真），用 `scripts/loopback_fixture.py` 复现：
-两个监听端口被正确识别、未监听端口不误判、抓到的 banner 里 ESC 控制字符被剥离、
-证据链通过、回放 0 分歧。
+这段用 `tests/test_real_backend.py` 复现，它是测试套件的一部分，每次 CI 都会跑。
+
+**它证明了什么、没证明什么，就写在这里，因为它很容易被读成后者：**
+
+* 证明：真实 socket 上的四种分类正确（accept → open、无监听 → 不误判为 open、
+  banner 里的 ESC/BEL 在进入产物前被剥离）；真实 socket 上**回放零分歧**；
+  同一配置跑两次得到**逐位相同的调度序列**。
+* **不证明**：丢包、延迟分布、限速、跨网段 RST 时序、DNS 失败模式。
+  回环上无法产生这些条件。
+
+所以它不是"真实网络验证"，它是"真实 socket 上的分类与可复现性验证"。
+两者差得很远，README 不打算用一个去暗示另一个。
 
 ---
 

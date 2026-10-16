@@ -26,7 +26,15 @@ from __future__ import annotations
 
 import unittest
 
-from schedprobe.models import PortState, ProbeResult, SegmentState, Verdict
+from schedprobe.models import (
+    ANSWERED_CEILING,
+    DEAD_FLOOR,
+    UNTESTED_SCORE,
+    PortState,
+    ProbeResult,
+    SegmentState,
+    Verdict,
+)
 from schedprobe.planners import build_planner
 
 
@@ -50,7 +58,14 @@ def probe(
     )
 
 
-def build(planned: int, opens: int, closed: int, filtered: int) -> SegmentState:
+def build(
+    planned: int,
+    opens: int,
+    closed: int,
+    filtered: int,
+    *,
+    confidence_filtered: float = 0.2,
+) -> SegmentState:
     """Fold a run's worth of observations into one segment and return its state."""
     state = SegmentState(segment="10.0.0.0/24", hosts=("10.0.0.1",), planned=planned)
     for _ in range(opens):
@@ -58,7 +73,7 @@ def build(planned: int, opens: int, closed: int, filtered: int) -> SegmentState:
     for _ in range(closed):
         state.observe(probe(PortState.CLOSED, confidence=0.9))
     for _ in range(filtered):
-        state.observe(probe(PortState.FILTERED, confidence=0.2))
+        state.observe(probe(PortState.FILTERED, confidence=confidence_filtered))
     return state
 
 
@@ -157,6 +172,104 @@ class TestPlannerActuallyPrefersTheLiveSegment(unittest.TestCase):
             "10.0.0.1",
             f"planner would probe {head} first; the segment that has answered must come first",
         )
+
+
+class TestBandsAreDisjointOverTheWholeGrid(unittest.TestCase):
+    """The contract, swept rather than sampled.
+
+    A reviewer's follow-up was the right one: three constants and five hand-built cases
+    describe the fix, but nothing enforces it. If someone later changes the penalty, the
+    coverage bonus or the pruning thresholds, the bands could quietly overlap again and
+    the sample cases might not be the ones that notice. The property is not "these five
+    states are ordered", it is "for *every* reachable state, proof of life outranks a
+    segment that has answered nothing" - so it is swept over a grid.
+
+    The grid is deliberately coarse enough to run in a fraction of a second and wide
+    enough to include the boundaries: a segment with a single reply among hundreds of
+    timeouts, a segment with nothing but timeouts, and a segment that has not been probed.
+    """
+
+    def test_every_answered_state_outranks_every_dead_state(self) -> None:
+        planned_values = (1, 2, 3, 7, 64, 257, 1024)
+        answered_values = (1, 2, 5, 50, 500)
+        # Confidences bracket what the engine actually records: 0.2 for a timeout, 0.9 for
+        # a refusal, near 1.0 for a connect.
+        confidence_values = (0.2, 0.45, 0.7, 0.95)
+        timeout_penalties = (0.5, 1.0, 2.0)
+
+        checked = 0
+        worst_margin = None
+        for planned in planned_values:
+            for confidence in confidence_values:
+                for penalty in timeout_penalties:
+                    dead = build(
+                        planned=planned,
+                        opens=0,
+                        closed=0,
+                        filtered=planned,
+                        confidence_filtered=0.2,
+                    )
+                    dead_score = dead.health_score(timeout_penalty=penalty)
+                    for answered in answered_values:
+                        if answered > planned:
+                            continue
+                        for kind in ("open", "closed"):
+                            mixed = build(
+                                planned=planned,
+                                opens=answered if kind == "open" else 0,
+                                closed=answered if kind == "closed" else 0,
+                                filtered=planned - answered,
+                                confidence_filtered=confidence,
+                            )
+                            mixed_score = mixed.health_score(timeout_penalty=penalty)
+                            self.assertLess(
+                                mixed_score,
+                                dead_score,
+                                f"planned={planned} answered={answered} kind={kind} "
+                                f"conf={confidence} penalty={penalty}: "
+                                f"answered={mixed_score} must be < dead={dead_score}",
+                            )
+                            margin = dead_score - mixed_score
+                            if worst_margin is None or margin < worst_margin[0]:
+                                worst_margin = (
+                                    margin,
+                                    f"planned={planned} answered={answered} kind={kind} "
+                                    f"conf={confidence} penalty={penalty}",
+                                )
+                            checked += 1
+        # A vacuous sweep would pass for the wrong reason.
+        self.assertGreater(checked, 500, f"the grid only produced {checked} combinations")
+        assert worst_margin is not None
+        self.assertGreater(
+            worst_margin[0],
+            0.0,
+            f"the tightest margin is {worst_margin[0]} at {worst_margin[1]}",
+        )
+
+    def test_an_answered_state_also_outranks_an_untested_one(self) -> None:
+        # The other half of the ordering, and the one the docstring states explicitly:
+        # "deliberately worse than any segment that has answered even one probe".
+        untested = SegmentState(segment="10.0.0.0/24", hosts=("10.0.0.1",), planned=0)
+        untested_score = untested.health_score()
+        for planned in (1, 2, 7, 64, 1024):
+            for answered in (1, 2, 5, 50):
+                if answered > planned:
+                    continue
+                state = build(planned=planned, opens=answered, closed=0, filtered=planned - answered)
+                self.assertLess(
+                    state.health_score(),
+                    untested_score,
+                    f"planned={planned} answered={answered}: a segment that replied must "
+                    f"outrank one that has not been probed",
+                )
+
+    def test_the_bands_are_ordered_as_documented(self) -> None:
+        # Pin the actual constants so a change to them is a visible decision rather than a
+        # silent drift. The values are part of the contract, not an implementation detail:
+        # the ordering only holds because the bands do not overlap.
+        self.assertLess(ANSWERED_CEILING, UNTESTED_SCORE)
+        self.assertLess(UNTESTED_SCORE, DEAD_FLOOR)
+        self.assertLessEqual(ANSWERED_CEILING, 0.3)
 
 
 if __name__ == "__main__":  # pragma: no cover
