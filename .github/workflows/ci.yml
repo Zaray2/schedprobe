@@ -70,19 +70,29 @@ jobs:
         # number on every run rather than reading a claim about it in a README.
         run: python scripts/test_tiers.py
 
-      - name: Network condition tests must actually run, not skip
+      - name: Network condition tests (injected loss; skipped only where impossible)
         # tests/test_netem.py injects packet loss so the FILTERED path has real-socket
         # coverage. It tries a network namespace with `tc netem` first and falls back to an
-        # iptables DROP rule on a loopback port. On a Linux runner one of the two should
-        # work; if neither does, the build goes red with the measured reason rather than
-        # green, because a silent skip would make this look covered when it is not.
+        # iptables DROP rule.
+        #
+        # This step failed the build twice before it was written this way, and the reason is
+        # worth keeping: a GitHub-hosted runner has neither the namespace privileges nor a
+        # working iptables DROP, so "fail on skip" went red for a cause no code change could
+        # address. A permanently red build trains people to ignore red, which costs more
+        # than the gap it guards. So the semantics are now the ones that are actually
+        # correct: **if a mechanism works here, the tests must run; if none does, the skip
+        # is reported loudly and the build continues.**
         run: |
-          python -m unittest tests.test_netem -v 2>&1 | tee netem.log
+          probe="$(python scripts/netem_probe.py 2>&1)"
+          echo "$probe"
+          python -m unittest tests/test_netem -v 2>&1 | tee netem.log
           if grep -q "skipped" netem.log; then
-            echo "::error::injected-loss tests skipped. Reason follows:"
-            grep -o "skipped .*" netem.log | head -1
-            echo "::error::$(grep -o "skipped .*" netem.log | head -1)"
-            exit 1
+            if printf '%s' "$probe" | grep -q "^available:"; then
+              echo "::error::a packet-injection mechanism is available here but the tests skipped; the FILTERED path is untested despite being testable"
+              grep -o "skipped .*" netem.log | head -1
+              exit 1
+            fi
+            echo "::notice::injected-loss tests skipped: this runner cannot drop packets, so the FILTERED path is covered by the simulator only in this build"
           fi
 
       - name: Ruff lint
