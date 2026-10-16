@@ -28,6 +28,8 @@ from schedprobe.evidence import (
 )
 from schedprobe.util import canonical_json, redact, sha256_hex
 
+from .tiers import TIER_ORACLE, tier
+
 
 def _write_chain(path: Path, count: int = 4) -> None:
     with EvidenceLog(path, "run-test", truncate=True) as log:
@@ -35,6 +37,7 @@ def _write_chain(path: Path, count: int = 4) -> None:
             log.append("probe", {"index": index, "host": "10.0.0.1", "port": 80 + index})
 
 
+@tier(TIER_ORACLE)
 class TestEvidenceLog(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -80,6 +83,7 @@ class TestEvidenceLog(unittest.TestCase):
         self.assertEqual(canonical_json({"a": 1, "b": 2}), canonical_json({"b": 2, "a": 1}))
 
 
+@tier(TIER_ORACLE)
 class TestChainVerification(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -192,6 +196,7 @@ class TestChainVerification(unittest.TestCase):
         self.assertTrue(payload["ok"])
 
 
+@tier(TIER_ORACLE)
 class TestManifest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -227,6 +232,7 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(payload["value"], 2)
 
 
+@tier(TIER_ORACLE)
 class TestTimelines(unittest.TestCase):
     """The timelines are the data behind ``explain`` and ``diff``; they must be robust."""
 
@@ -308,6 +314,7 @@ class TestTimelines(unittest.TestCase):
         self.assertEqual(reason_histogram([None, "y"]), {"unknown": 1, "y": 1})
 
 
+@tier(TIER_ORACLE)
 class TestRedaction(unittest.TestCase):
     """``--redact`` must pseudonymise consistently within a run and scrubbable in logs."""
 

@@ -20,6 +20,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from .tiers import TIER_CONTRACT, tier
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -33,6 +35,7 @@ def _cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@tier(TIER_CONTRACT)
 class TestJsonModeContract(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="schedprobe-json-"))

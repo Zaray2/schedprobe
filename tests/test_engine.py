@@ -35,6 +35,8 @@ from schedprobe.planners.base import ProbePlan, RttTracker, SegmentBook
 from schedprobe.replay import replay_chain
 from schedprobe.util import canonical_json, sha256_hex
 
+from .tiers import TIER_CONSISTENCY, TIER_CONTRACT, TIER_ORACLE, tier
+
 
 def _config(hosts, ports, *, kind="adaptive", budget=50000, seed=1337, **planner_kwargs) -> ScanConfig:
     planner_kwargs.setdefault("prune_mode", "defer")
@@ -84,6 +86,7 @@ def _result(
     )
 
 
+@tier(TIER_CONSISTENCY)
 class TestSegmentBook(unittest.TestCase):
     def test_groups_hosts_by_prefix(self) -> None:
         book = SegmentBook(["10.0.1.5", "10.0.1.6", "10.0.2.5"], 24)
@@ -122,6 +125,7 @@ class TestSegmentBook(unittest.TestCase):
         self.assertIn("health_score", snapshot[0])
 
 
+@tier(TIER_CONSISTENCY)
 class TestHealthScore(unittest.TestCase):
     """The scoring rules are policy, so they get explicit expectations.
 
@@ -173,6 +177,7 @@ class TestHealthScore(unittest.TestCase):
         self.assertEqual(state.health_score(), state.health_score())
 
 
+@tier(TIER_CONSISTENCY)
 class TestRttTracker(unittest.TestCase):
     def test_starts_at_base(self) -> None:
         tracker = RttTracker(0.6, 0.15, 3.0)
@@ -209,6 +214,7 @@ class TestRttTracker(unittest.TestCase):
         self.assertEqual(list(tracker.snapshot()), ["a", "b"])
 
 
+@tier(TIER_CONTRACT)
 class TestPlannerConstruction(unittest.TestCase):
     def test_unknown_planner_rejected(self) -> None:
         with self.assertRaises(ConfigError):
@@ -251,6 +257,7 @@ class TestPlannerConstruction(unittest.TestCase):
         self.assertIsNone(planner.peek())
 
 
+@tier(TIER_CONSISTENCY)
 class TestAdaptivePolicy(unittest.TestCase):
     def _adaptive(self, hosts, ports, **kwargs) -> AdaptivePlanner:
         config = PlannerConfig(kind="adaptive", seed=1, cost_budget=100000, **kwargs)
@@ -417,6 +424,7 @@ class TestAdaptivePolicy(unittest.TestCase):
         self.assertEqual(planner.score(*head), min(planner.score(*p) for p in planner.live_pairs()))
 
 
+@tier(TIER_ORACLE)
 class TestPeekInvariant(unittest.TestCase):
     """``peek`` must return the minimum-scoring live pair, not merely a heap minimum."""
 
@@ -446,6 +454,7 @@ class TestPeekInvariant(unittest.TestCase):
         self.assertIsNotNone(planner.peek())
 
 
+@tier(TIER_ORACLE)
 class TestCostLedger(unittest.TestCase):
     def test_reserve_and_release(self) -> None:
         ledger = CostLedger(budget=1000)
@@ -485,6 +494,7 @@ class TestCostLedger(unittest.TestCase):
         self.assertFalse(ledger.may_dispatch(1))
 
 
+@tier(TIER_ORACLE)
 class TestFrontierReconstruction(unittest.TestCase):
     def _frontier(self, planner, budget=100000):
         return Frontier(planner, CostLedger(budget=budget))
@@ -550,6 +560,7 @@ class TestFrontierReconstruction(unittest.TestCase):
         self.assertEqual(extra, [("10.0.0.1", 443)])
 
 
+@tier(TIER_ORACLE)
 class TestDeterminism(unittest.TestCase):
     """Same inputs must produce the same decisions - the project's central claim."""
 
@@ -628,6 +639,7 @@ class TestDeterminism(unittest.TestCase):
         self.assertTrue(report.divergences)
 
 
+@tier(TIER_ORACLE)
 class TestBudgetInvariant(unittest.TestCase):
     """The headline claim, asserted from the artifact rather than from a counter."""
 
@@ -697,6 +709,7 @@ class TestBudgetInvariant(unittest.TestCase):
         )
 
 
+@tier(TIER_CONTRACT)
 class TestEngineSafety(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -753,6 +766,7 @@ class TestEngineSafety(unittest.TestCase):
         self.assertTrue(run.chain_ok)
 
 
+@tier(TIER_ORACLE)
 class TestBackendDeterminism(unittest.TestCase):
     def test_scenario_ground_truth_is_stable(self) -> None:
         scenario = builtin_scenarios()["blackhole-segment"]

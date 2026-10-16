@@ -20,7 +20,10 @@ from schedprobe.targets import (
     validate_targets,
 )
 
+from .tiers import TIER_CONTRACT, TIER_ORACLE, tier
 
+
+@tier(TIER_CONTRACT)
 class TestParsePorts(unittest.TestCase):
     def test_single_and_list(self) -> None:
         self.assertEqual(parse_ports("80"), (80,))
@@ -51,6 +54,7 @@ class TestParsePorts(unittest.TestCase):
         self.assertEqual(parse_ports("443,80,443"), (443, 80))
 
 
+@tier(TIER_ORACLE)
 class TestExpandTargets(unittest.TestCase):
     def test_literal_and_hostname(self) -> None:
         self.assertEqual(expand_targets(["127.0.0.1"]), ("127.0.0.1",))
@@ -97,6 +101,7 @@ class TestExpandTargets(unittest.TestCase):
             expand_targets(["300.1.1.1/24"])
 
 
+@tier(TIER_CONTRACT)
 class TestValidateTargets(unittest.TestCase):
     def test_loopback_allowed_by_default(self) -> None:
         safety = SafetyConfig()
@@ -153,6 +158,7 @@ class TestValidateTargets(unittest.TestCase):
             validate_targets(["10.0.0.1", "10.0.0.2"], SafetyConfig(), max_hosts=1)
 
 
+@tier(TIER_ORACLE)
 class TestSegmentation(unittest.TestCase):
     def test_segment_of_ipv4(self) -> None:
         self.assertEqual(segment_of("10.1.2.3", 24), "10.1.2.0/24")
@@ -170,6 +176,7 @@ class TestSegmentation(unittest.TestCase):
         self.assertEqual(grouped["10.0.1.0/24"], ("10.0.1.5", "10.0.1.6"))
 
 
+@tier(TIER_CONTRACT)
 class TestScanConfigScopeIntegration(unittest.TestCase):
     """The guard must fire through the config layer, not only when called directly."""
 

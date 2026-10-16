@@ -27,6 +27,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from .tiers import TIER_CONSISTENCY, TIER_ORACLE, tier
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -51,6 +53,7 @@ def _markdown_files() -> list[Path]:
     )
 
 
+@tier(TIER_CONSISTENCY)
 class TestExitCodesAreReachable(unittest.TestCase):
     """The defect a reviewer found: a constant documented but never returned."""
 
@@ -95,6 +98,7 @@ class TestExitCodesAreReachable(unittest.TestCase):
         )
 
 
+@tier(TIER_ORACLE)
 class TestLinksResolve(unittest.TestCase):
     def test_every_relative_markdown_link_points_at_a_real_file(self) -> None:
         broken: list[str] = []
@@ -112,6 +116,7 @@ class TestLinksResolve(unittest.TestCase):
         self.assertEqual(broken, [], "broken relative links:\n  " + "\n  ".join(broken))
 
 
+@tier(TIER_CONSISTENCY)
 class TestReadmeStaysAFrontPage(unittest.TestCase):
     def test_line_budget(self) -> None:
         lines = README.read_text(encoding="utf-8").splitlines()
@@ -142,6 +147,7 @@ class TestReadmeStaysAFrontPage(unittest.TestCase):
         )
 
 
+@tier(TIER_CONSISTENCY)
 class TestCliReferenceMatchesTheParser(unittest.TestCase):
     def test_documented_flags_exist(self) -> None:
         parser = build_parser()

@@ -40,11 +40,14 @@ from schedprobe.bench import (
 from schedprobe.errors import ConfigError
 from schedprobe.models import PortState, segment_of
 
+from .tiers import TIER_CONTRACT, TIER_ORACLE, tier
+
 
 def _run(coro):
     return asyncio.run(coro)
 
 
+@tier(TIER_ORACLE)
 class TestGeneratedScenarios(unittest.TestCase):
     """``dense_sweep_scenario`` exists to give recall more than three samples."""
 
@@ -113,6 +116,7 @@ class TestGeneratedScenarios(unittest.TestCase):
             dense_sweep_scenario(hosts_per_segment=0)
 
 
+@tier(TIER_CONTRACT)
 class TestCaseConstruction(unittest.TestCase):
     def test_synthetic_case_carries_the_scenario_hosts(self) -> None:
         scenario = dense_sweep_scenario(hosts=3, ports=16, opens_per_host=1)
@@ -172,6 +176,7 @@ class TestCaseConstruction(unittest.TestCase):
         )
 
 
+@tier(TIER_ORACLE)
 class TestResultArithmetic(unittest.TestCase):
     def _result(self, **overrides) -> BenchmarkResult:
         base = {
@@ -233,6 +238,7 @@ class TestResultArithmetic(unittest.TestCase):
         self.assertEqual(deltas, {"baseline_missing": "fixed"})
 
 
+@tier(TIER_ORACLE)
 class TestRepeatAggregation(unittest.TestCase):
     def test_repeat_result_summarises_the_spread(self) -> None:
         result = RepeatResult(planner="adaptive", seeds=(1, 2, 3), recalls=(0.25, 0.5, 0.75))
@@ -253,6 +259,7 @@ class TestRepeatAggregation(unittest.TestCase):
         self.assertEqual(payload["mean_recall"], 0.5)
 
 
+@tier(TIER_ORACLE)
 class TestHarnessIsReproducible(unittest.TestCase):
     """The simulator is deterministic, so the harness must be too."""
 
@@ -297,6 +304,7 @@ class TestHarnessIsReproducible(unittest.TestCase):
             self.assertGreater(row.cost_spent, 0)
 
 
+@tier(TIER_CONTRACT)
 class TestWriteResults(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="schedprobe-benchw-"))

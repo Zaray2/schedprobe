@@ -45,6 +45,8 @@ from schedprobe.evidence import (
 )
 from schedprobe.util import canonical_json, redact, sha256_hex
 
+from .tiers import TIER_ORACLE, tier
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Distinctive strings, each planted in exactly one user-controlled field, so a hit in an
@@ -111,6 +113,7 @@ def _hits(text: str) -> dict[str, int]:
     return {name: text.count(value) for name, value in CANARIES.items() if text.count(value)}
 
 
+@tier(TIER_ORACLE)
 class TestRedactionCoverage(unittest.TestCase):
     """The contract for what ``--redact`` does and does not cover."""
 
@@ -194,6 +197,7 @@ class TestRedactionCoverage(unittest.TestCase):
         self.assertNotEqual(host_a, host_b)
 
 
+@tier(TIER_ORACLE)
 class TestTamperDetection(unittest.TestCase):
     """Which edits the chain catches, and which it provably cannot."""
 
@@ -303,6 +307,7 @@ class TestTamperDetection(unittest.TestCase):
         self.assertNotEqual(original, rewritten)
 
 
+@tier(TIER_ORACLE)
 class TestRedactionIsNotDeletion(unittest.TestCase):
     """``--redact`` must be reversible *by the holder*, not by the reader."""
 

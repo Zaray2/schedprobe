@@ -24,7 +24,10 @@ from schedprobe.config import (
 )
 from schedprobe.errors import ConfigError, TargetValidationError
 
+from .tiers import TIER_CONTRACT, tier
 
+
+@tier(TIER_CONTRACT)
 class TestPlannerConfig(unittest.TestCase):
     def test_defaults_validate(self) -> None:
         PlannerConfig().validate()
@@ -64,6 +67,7 @@ class TestPlannerConfig(unittest.TestCase):
             PlannerConfig(budget_slot_ms=-1).validate()
 
 
+@tier(TIER_CONTRACT)
 class TestNetworkConfig(unittest.TestCase):
     def test_timeout_ordering_enforced(self) -> None:
         with self.assertRaises(ConfigError):
@@ -85,6 +89,7 @@ class TestNetworkConfig(unittest.TestCase):
             NetworkConfig(rate_limit_pps=-1.0).validate()
 
 
+@tier(TIER_CONTRACT)
 class TestOutputConfig(unittest.TestCase):
     def test_format_restricted(self) -> None:
         for good in ("table", "json", "jsonl", "csv"):
@@ -97,6 +102,7 @@ class TestOutputConfig(unittest.TestCase):
             OutputConfig(out_dir="").validate()
 
 
+@tier(TIER_CONTRACT)
 class TestSafetyConfig(unittest.TestCase):
     def test_span_ratio_bounds(self) -> None:
         SafetyConfig(max_span_ratio=1.0).validate()
@@ -106,6 +112,7 @@ class TestSafetyConfig(unittest.TestCase):
             SafetyConfig(max_span_ratio=1.5).validate()
 
 
+@tier(TIER_CONTRACT)
 class TestScanConfig(unittest.TestCase):
     def test_default_config_validates(self) -> None:
         cfg = default_config()
@@ -197,6 +204,7 @@ class TestScanConfig(unittest.TestCase):
             config_from_dict({"safety": "not-a-table"})
 
 
+@tier(TIER_CONTRACT)
 class TestLoadConfig(unittest.TestCase):
     def test_load_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

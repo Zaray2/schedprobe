@@ -51,11 +51,14 @@ from schedprobe.reporting import (
     write_results,
 )
 
+from .tiers import TIER_CONSISTENCY, TIER_CONTRACT, TIER_ORACLE, tier
+
 
 def _delta(kind: str, severity: str = "info") -> PortDelta:
     return PortDelta("10.0.0.1", 80, kind, severity, "closed", "open", "test")
 
 
+@tier(TIER_CONSISTENCY)
 class TestDiffClassification(unittest.TestCase):
     def test_identical_runs_produce_no_deltas(self) -> None:
         states = {("10.0.0.1", 80): PortState.OPEN}
@@ -168,6 +171,7 @@ class TestDiffClassification(unittest.TestCase):
         self.assertEqual(report.not_probed, [])
 
 
+@tier(TIER_ORACLE)
 class TestSanitize(unittest.TestCase):
     def test_strips_control_and_escape_characters(self) -> None:
         self.assertNotIn("\x1b", sanitize("a\x1b[31mred\x1b[0m"))
@@ -191,6 +195,7 @@ class TestSanitize(unittest.TestCase):
         self.assertEqual(sanitize(None), "None")
 
 
+@tier(TIER_CONSISTENCY)
 class TestRenderers(unittest.TestCase):
     def test_render_table_has_one_rule_and_no_ansi(self) -> None:
         table = render_table(["a", "b"], [[1, 2], [3, 4]])
@@ -316,6 +321,7 @@ class TestRenderers(unittest.TestCase):
         self.assertIn("50.0%", text)
 
 
+@tier(TIER_CONTRACT)
 class TestWriteResults(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -363,6 +369,7 @@ class TestWriteResults(unittest.TestCase):
             write_results(self.dir / "r.xml", self.results, fmt="xml")
 
 
+@tier(TIER_CONTRACT)
 class TestEmitter(unittest.TestCase):
     def test_data_prints_json_in_both_modes(self) -> None:
         for json_mode in (False, True):
@@ -397,6 +404,7 @@ class TestEmitter(unittest.TestCase):
         self.assertEqual(run_async(coro()), 7)
 
 
+@tier(TIER_CONTRACT)
 class TestExitCodes(unittest.TestCase):
     def test_mapping_is_specific(self) -> None:
         self.assertEqual(exit_code_for(EvidenceError("x")), EXIT_EVIDENCE)
@@ -413,6 +421,7 @@ class TestExitCodes(unittest.TestCase):
         self.assertEqual(len(codes), 5)
 
 
+@tier(TIER_CONTRACT)
 class TestCliContract(unittest.TestCase):
     """Run the real ``main`` so the tests cover argparse wiring, not just helpers."""
 

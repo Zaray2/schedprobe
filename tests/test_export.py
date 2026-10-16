@@ -34,6 +34,8 @@ from schedprobe.errors import EvidenceError
 from schedprobe.evidence import file_digest, read_records, verify_chain
 from schedprobe.export import EXPORT_SUFFIX, export_run, redact_structure
 
+from .tiers import TIER_ORACLE, tier
+
 ROOT = Path(__file__).resolve().parents[1]
 
 TARGET = "10.77.88.9"
@@ -43,6 +45,7 @@ AUTH = "AUTH-CANARY-4d17"
 CANARIES = (TARGET, "10.77.88.0", LABEL, NOTES, AUTH)
 
 
+@tier(TIER_ORACLE)
 class TestStructureRules(unittest.TestCase):
     """The walker, exercised directly so the rules are visible without a run."""
 
@@ -136,6 +139,7 @@ class TestStructureRules(unittest.TestCase):
         self.assertEqual(hits, 0)
 
 
+@tier(TIER_ORACLE)
 class TestExportRun(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="schedprobe-export-"))

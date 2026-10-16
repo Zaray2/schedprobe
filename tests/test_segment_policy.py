@@ -37,6 +37,8 @@ from schedprobe.models import (
 )
 from schedprobe.planners import build_planner
 
+from .tiers import TIER_CONSISTENCY, tier
+
 
 def probe(
     state: PortState, *, confidence: float, host: str = "10.0.0.1", port: int = 80, cost: int = 600
@@ -77,6 +79,7 @@ def build(
     return state
 
 
+@tier(TIER_CONSISTENCY)
 class TestMixedLivenessSegment(unittest.TestCase):
     """The reviewer's scenario, constructed from observations rather than asserted."""
 
@@ -124,6 +127,7 @@ class TestMixedLivenessSegment(unittest.TestCase):
         self.assertLess(many.health_score(), few.health_score())
 
 
+@tier(TIER_CONSISTENCY)
 class TestPlannerActuallyPrefersTheLiveSegment(unittest.TestCase):
     """The score is only interesting if the planner acts on it."""
 
@@ -174,6 +178,7 @@ class TestPlannerActuallyPrefersTheLiveSegment(unittest.TestCase):
         )
 
 
+@tier(TIER_CONSISTENCY)
 class TestBandsAreDisjointOverTheWholeGrid(unittest.TestCase):
     """The contract, swept rather than sampled.
 

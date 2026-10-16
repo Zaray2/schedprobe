@@ -31,7 +31,6 @@ import contextlib
 import errno
 import shutil
 import socket
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -43,6 +42,8 @@ from schedprobe.engine import ScanEngine
 from schedprobe.evidence import read_records, verify_chain
 from schedprobe.models import PortState, Verdict
 from schedprobe.replay import replay_chain
+
+from .tiers import TIER_ORACLE, tier
 
 
 def _have_command(name: str) -> bool:
@@ -175,6 +176,7 @@ def _run(config: ScanConfig, out_dir: Path, run_id: str, *, grab_banner: bool = 
     return asyncio.run(engine.run())
 
 
+@tier(TIER_ORACLE)
 class TestRealBackendClassification(unittest.TestCase):
     """Four outcomes, checked against an independent measurement of the same port.
 
@@ -260,6 +262,7 @@ class TestRealBackendClassification(unittest.TestCase):
             )
 
 
+@tier(TIER_ORACLE)
 class TestRealBackendReproducibility(unittest.TestCase):
     """The project's central claim, on real sockets, as a test rather than a script."""
 
@@ -309,48 +312,6 @@ class TestRealBackendReproducibility(unittest.TestCase):
             status = verify_chain(run.evidence_path)
             self.assertTrue(status.ok, status.reason)
             self.assertEqual(status.records, run.manifest["evidence_records"])
-
-
-class TestNetworkNamespace(unittest.TestCase):
-    """Packet loss and latency, if the host can give us a namespace to inject them into.
-
-    A reviewer pointed out, correctly, that "needs a host I own" described a priority
-    problem as a resource problem: `ip netns` plus `tc qdisc netem` can inject loss and
-    delay on loopback with no second machine. It cannot be done on the Windows host this
-    repository was authored on, which is exactly why the check is here rather than in an
-    operator's shell history - CI runs on Linux and will exercise it when it can.
-
-    Skipped rather than failed when the capability is absent, and the skip reason says
-    which part was missing, so a green CI run cannot be mistaken for coverage it does not
-    have.
-    """
-
-    @staticmethod
-    def _capability() -> str | None:
-        if not _have_command("ip"):
-            return "the `ip` command is not available (non-Linux host)"
-        probe = subprocess.run(
-            ["ip", "netns", "add", "schedprobe-probe"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if probe.returncode != 0:
-            return f"cannot create a network namespace here: {probe.stderr.strip()[:120]}"
-        subprocess.run(["ip", "netns", "del", "schedprobe-probe"], capture_output=True, check=False)
-        if not _have_command("tc"):
-            return "the `tc` command is not available, so no qdisc can be installed"
-        return None
-
-    def test_netem_is_reachable(self) -> None:
-        reason = self._capability()
-        if reason:
-            self.skipTest(reason)
-        # If we reach here the host can inject loss and delay, which is where the real
-        # gap is: every claim about timeout behaviour under loss is currently untested.
-        # The scenario itself is left to the next change rather than half-implemented
-        # here, so nothing in this file claims coverage it does not provide.
-        self.assertIsNone(reason)
 
 
 if __name__ == "__main__":  # pragma: no cover
