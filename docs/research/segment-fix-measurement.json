@@ -1,0 +1,109 @@
+{
+  "description": "1 host(s) with 40 open ports mixed into a /24 with 7 entirely filtered hosts",
+  "hosts": 8,
+  "mean_recall": 1.0,
+  "open_ports": 40,
+  "ports": 256,
+  "rows": [
+    {
+      "budget": 20000,
+      "cost_spent": 17235,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 68,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 1337
+    },
+    {
+      "budget": 20000,
+      "cost_spent": 17275,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 68,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 4242
+    },
+    {
+      "budget": 20000,
+      "cost_spent": 17315,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 68,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 9001
+    },
+    {
+      "budget": 60000,
+      "cost_spent": 57342,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 79,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 1337
+    },
+    {
+      "budget": 60000,
+      "cost_spent": 57382,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 79,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 4242
+    },
+    {
+      "budget": 60000,
+      "cost_spent": 57422,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 79,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 9001
+    },
+    {
+      "budget": 150000,
+      "cost_spent": 148455,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 105,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 1337
+    },
+    {
+      "budget": 150000,
+      "cost_spent": 148495,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 105,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 4242
+    },
+    {
+      "budget": 150000,
+      "cost_spent": 148535,
+      "open_found": 40,
+      "open_total": 40,
+      "pairs_total": 2048,
+      "pairs_touched": 105,
+      "pruned_segments": 8,
+      "recall": 1.0,
+      "seed": 9001
+    }
+  ],
+  "scenario": "mixed-liveness-1rich-7quiet"
+}

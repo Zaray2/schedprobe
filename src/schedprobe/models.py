@@ -162,6 +162,16 @@ class PlannedProbe:
         )
 
 
+# Score bands for :meth:`SegmentState.health_score`, lowest first. They are disjoint on
+# purpose: an earlier version let the "answered" branch run up to 1.5, which put a segment
+# that had found an open port *behind* a segment that had answered nothing at all. See the
+# comment in ``health_score`` and ``tests/test_segment_policy.py``.
+ANSWERED_CEILING = 0.25  # anything that has replied at least once
+UNTESTED_SCORE = 0.5  # minus the coverage bonus, so ~0.3 in practice
+DEAD_FLOOR = 0.75  # only ever timed out
+_ANSWERED_RAW_MAX = 1.5  # base <= 1.0 plus penalty <= 0.5
+
+
 @dataclass(slots=True)
 class SegmentState:
     """Running health estimate for one network segment (a /24 by default).
@@ -253,15 +263,31 @@ class SegmentState:
             if self.filtered_count > 0:
                 # Only timeouts so far: productive-but-quiet is still better than
                 # this, so it must rank behind a segment we simply have not tried.
-                return round(0.75 + timeout_penalty * waste_ratio * 0.25, 6)
+                return round(DEAD_FLOOR + timeout_penalty * waste_ratio * 0.25, 6)
             # Untested. Deliberately worse than any segment that has answered even
             # one probe (see the branch below), because the planner has no evidence
             # and should spend its next probe where it has some.
-            return round(0.5 - coverage_bonus, 6)
+            return round(UNTESTED_SCORE - coverage_bonus, 6)
         productive = answered / denominator
         base = 1.0 - self.confidence_ema * productive
         penalty = timeout_penalty * waste_ratio * 0.5
-        return round(max(0.0, base + penalty - coverage_bonus), 6)
+        # The answered branch is rescaled into a band strictly below the untested one.
+        #
+        # This is the fix for a real defect, and the shape of it is worth keeping: the
+        # three branches used to be computed on scales that overlapped. A segment holding
+        # one open port among 999 timeouts scored `base + penalty - coverage`
+        # = 0.9998 + 0.4995 = 1.499, while a segment that had answered *nothing* scored
+        # 0.75 + 0.25 = 1.00. Lower scores are probed first, so the planner deferred - and
+        # then pruned - the one segment that had proven there was something to find, and
+        # preferred a /24 that was entirely dead.
+        #
+        # The penalty term is what pushed it over: it is there to say "do not keep pouring
+        # budget into timeouts", but it was being applied to a segment whose timeouts are
+        # exactly the cost of having found the open port. Proof of life has to dominate
+        # that, so the whole branch is mapped into [0, ANSWERED_CEILING), whose natural
+        # maximum is `base_max + penalty_max = 1.0 + 0.5`.
+        raw = base + penalty - coverage_bonus
+        return round(max(0.0, raw * (ANSWERED_CEILING / _ANSWERED_RAW_MAX)), 6)
 
     def as_dict(self) -> dict[str, Any]:
         return {
