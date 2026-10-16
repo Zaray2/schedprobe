@@ -234,6 +234,14 @@ def read_records(path: str | os.PathLike[str]) -> Iterator[EvidenceRecord]:
 
 
 @dataclass(slots=True)
+class _ReadFailure:
+    """Marker yielded by :func:`_read_records_lenient` when the stream breaks."""
+
+    message: str
+    line: int | None
+
+
+@dataclass(slots=True)
 class ChainStatus:
     ok: bool
     records: int
@@ -244,15 +252,56 @@ class ChainStatus:
     kinds: dict[str, int] | None = None
 
 
+def _read_records_lenient(
+    path: str | os.PathLike[str],
+) -> Iterator[EvidenceRecord | _ReadFailure]:
+    """Yield records, turning a mid-stream failure into one final marker object.
+
+    Lets :func:`verify_chain` stay total *and* streaming: the caller sees the valid
+    prefix, then a single object saying where the log stopped being readable. Materialising
+    the whole file to catch the exception would defeat the streaming reader, and a hash
+    chain over a 30 MB log is exactly the case where that matters.
+    """
+    stream = read_records(path)
+    while True:
+        try:
+            record = next(stream)
+        except StopIteration:
+            return
+        except EvidenceError as exc:
+            line = exc.context.get("line")
+            yield _ReadFailure(exc.message, int(line) if isinstance(line, int) else None)
+            return
+        yield record
+
+
 def verify_chain(path: str | os.PathLike[str]) -> ChainStatus:
-    """Recompute the chain and report the first inconsistency, if any."""
+    """Recompute the chain and report the first inconsistency, if any.
+
+    This function is **total**: it reports a broken log as ``ok=False`` rather than
+    raising. A verifier that sometimes returns a status and sometimes throws is a bad
+    contract, and the case that makes it obvious is the one that matters most - a log
+    that has been corrupted. ``read_records`` still raises, because a caller that asked
+    for records genuinely cannot continue; this wrapper turns that into a verdict.
+    """
     expected_prev: str | None = None
     expected_seq = 0
     run_id = ""
     head = ""
     kinds: dict[str, int] = {}
     count = 0
-    for record in read_records(path):
+    for record in _read_records_lenient(path):
+        if isinstance(record, _ReadFailure):
+            where = f" at line {record.line}" if record.line else ""
+            return ChainStatus(
+                False,
+                count,
+                run_id,
+                head,
+                record.line,
+                f"unreadable{where}: {record.message}",
+                kinds,
+            )
         if expected_prev is None:
             run_id = record.run_id
             expected_prev = GENESIS_PREFIX + sha256_hex(run_id)

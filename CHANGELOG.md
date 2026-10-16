@@ -12,6 +12,40 @@
 
 ## [0.1.0] — 未发布（Unreleased）
 
+### 安全
+
+- **`--redact` 之前没有覆盖 `manifest.json`。** 摘要清单里的 `segments[].hosts`、
+  `segments[].segment` 与 `summary.first_open` 都是明文地址。manifest 只是摘要，**不是**
+  `replay` 的输入（回放读的是 evidence 日志），因此对它做伪名化没有任何代价。现在
+  `--redact` 覆盖 console、结果文件与 manifest，并新增 `scripts/audit_redaction.py`
+  用植入式 canary 逐文件核对覆盖范围。
+- **run-header 里 `"host_display": "hashed"` 是一个会误导人的字段。** 它对 console 和结果文件
+  成立，却写在一个自身含明文 `targets`、并且把 `--notes`（连同其中的 `--authorization` 引用）
+  原样保留的记录里。已替换为 `redaction` 块，按作用域逐项说明：覆盖了哪些产物、证据日志为何
+  必须保留明文、以及对外分享时需要注意什么。
+- **`evidence.jsonl` 的明文保留现在是一个被论证的例外，而不是被忽略的缺口。** 理由记录在
+  日志自身的 run-header 里：逐字节回放需要从主机地址重新推导 /24 网段，把地址伪名化会改变
+  日志本该复现的那次调度。没有声称脱敏后的证据仍是原件副本——反过来，明确写了它不是。
+
+### 修复
+
+- **`verify_chain()` 在日志损坏时抛异常，而不是返回失败状态。** 一个"有时返回状态、有时抛异常"
+  的 API 是坏契约，而最容易暴露这一点的场景恰恰最重要：日志已损坏。现在它是全函数
+  （total），损坏的日志返回 `ok=False` 并给出 `unreadable at line N`；CLI 的 `verify` 因此
+  从打印堆栈改为打印一行 `FAIL`，退出码仍为 3。`read_records()` 保持抛异常——请求记录行的
+  调用方确实无法继续，只有"给出裁决"的包装层吞掉它。
+- **证据日志现在以 UTF-8 中文可读。** `canonical_json` 原先 `ensure_ascii=True`，因此
+  `--notes "已授权"` 在日志里被写成 `\u5df2\u6388\u6743`。改为 `ensure_ascii=False`：字节
+  一致性不变（同一个序列化器既写盘也参与哈希，`sha256_hex` 对同一字符串按 UTF-8 编码），
+  但审计日志对中文使用者重新变得可读。
+
+### 变更
+
+- 新增 `tests/test_evidence_integrity.py`（17 项）：脱敏覆盖矩阵，以及篡改检测的**边界**——
+  哪些编辑会被发现，哪些在设计上无法发现。
+- 新增 `scripts/audit_redaction.py`：可复现的脱敏覆盖审计。
+
+
 ### 修复
 
 - **CI 首次运行失败（ruff 250 条违规）。** 作者环境未安装 ruff，因此仓库带着 250 条 lint

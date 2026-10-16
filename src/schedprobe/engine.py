@@ -47,7 +47,7 @@ from .models import PortState, ProbeResult, Verdict
 from .planners import Planner, build_planner
 from .planners.base import LiveSetChange, Pair, ProbePlan, RankUpdate
 from .targets import expand_targets
-from .util import get_logger, hash_pair
+from .util import get_logger, hash_pair, redact
 
 __all__ = ["RunSummary", "ScanEngine", "ScanRun"]
 
@@ -162,7 +162,90 @@ class ScanRun:
     def display_host(self, host: str) -> str:
         if not self.config.output.redact:
             return host
-        return hash_pair(host, 0, salt=self.run_id)
+        return pseudonym(host, self.run_id)
+
+
+def pseudonym(host: str, run_id: str) -> str:
+    """Stable per-run pseudonym for a host.
+
+    Keyed by the run id, so the same host maps to different pseudonyms in different runs
+    and two logs from one client cannot be joined on the host field. One function, used
+    by the console, the result files and the manifest, so a reader never sees two
+    different pseudonyms for one host in one run.
+    """
+    return hash_pair(host, 0, salt=run_id)
+
+
+def _redaction_block(requested: bool) -> dict[str, Any]:
+    """Describe exactly what ``--redact`` did, and what it deliberately did not do."""
+    if not requested:
+        return {
+            "requested": False,
+            "scope": [],
+            "evidence_log": "plaintext",
+            "reason": "redaction was not requested for this run",
+            "warning": "every artifact contains real host identifiers",
+        }
+    return {
+        "requested": True,
+        "scope": ["console", "results", "manifest"],
+        "evidence_log": "plaintext",
+        "pseudonym": "hmac-sha256(run_id, host)[:12] prefixed with 'h:'",
+        "reason": (
+            "a byte-exact replay re-derives the /24 segment of every host from the "
+            "address itself, so pseudonymising hosts in the evidence log would change "
+            "the schedule the log is supposed to reproduce"
+        ),
+        "warning": (
+            "evidence.jsonl keeps real target addresses and the verbatim --notes / "
+            "--label / --authorization text. Treat it as the confidential audit record; "
+            "redact a copy before sharing it, and do not present that copy as the "
+            "original."
+        ),
+    }
+
+
+def _pseudonymise_manifest(manifest: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Replace host identifiers in the summary manifest with their pseudonyms.
+
+    The manifest is a *summary*, not an input to ``replay`` - the evidence log is - so
+    pseudonymising it costs nothing and closes the last artifact that would otherwise
+    name the targets. Segment records keep their prefix length, which is useful context
+    and not identifying on its own, while the network address behind it is replaced by
+    the same pseudonym the console would show for that address.
+    """
+    out = dict(manifest)
+
+    def scrub_host(value: str) -> str:
+        return pseudonym(value, run_id)
+
+    segments = []
+    for record in out.get("segments") or []:
+        entry = dict(record)
+        hosts = entry.get("hosts")
+        if isinstance(hosts, list):
+            entry["hosts"] = [scrub_host(str(host)) for host in hosts]
+        segment = entry.get("segment")
+        if isinstance(segment, str) and segment:
+            network, _, prefix = segment.partition("/")
+            entry["segment"] = f"{scrub_host(network)}/{prefix}" if prefix else scrub_host(network)
+        segments.append(entry)
+    if "segments" in out:
+        out["segments"] = segments
+
+    summary = dict(out.get("summary") or {})
+    first_open = summary.get("first_open")
+    if isinstance(first_open, (list, tuple)) and first_open:
+        summary["first_open"] = [scrub_host(str(first_open[0])), *first_open[1:]]
+    if "summary" in out:
+        out["summary"] = summary
+
+    # ``probe_errors`` holds free-form text, so it gets the pattern-based scrubber
+    # (IP literals and credential-looking substrings) rather than a host lookup.
+    errors = out.get("probe_errors")
+    if isinstance(errors, list):
+        out["probe_errors"] = [redact(str(item), salt=run_id) for item in errors]
+    return out
 
 
 def _budget_slot(cfg: ScanConfig, planner_cfg: PlannerConfig) -> int:
@@ -299,7 +382,14 @@ class ScanEngine:
                     "targets": list(hosts),
                     "ports": list(ports),
                     "cost_unit": getattr(backend, "cost_unit", "unit"),
-                    "host_display": "hashed" if cfg.output.redact else "plain",
+                    # Redaction is declared by scope, not by a single optimistic word.
+                    # The previous field was ``"host_display": "hashed"``, which was true
+                    # of the console and the result files and false of the very record it
+                    # lived in: ``targets`` above is a plaintext list, and ``notes`` below
+                    # carries whatever the operator typed, including an authorization
+                    # reference. A reader deciding whether an artifact is safe to share
+                    # needs the boundary written down next to the data.
+                    "redaction": _redaction_block(cfg.output.redact),
                     # Recorded so an offline replay can mirror the engine's in-flight
                     # top-up behaviour exactly; without it the replayed frontier
                     # contents would legitimately differ from the recorded one.
@@ -878,6 +968,8 @@ class ScanEngine:
             "probe_errors": probe_errors,
             "generated_at": utc_now_iso(),
         }
+        if cfg.output.redact:
+            manifest = _pseudonymise_manifest(manifest, self.run_id)
         manifest_path = write_manifest(self.out_dir, manifest)
 
         return ScanRun(

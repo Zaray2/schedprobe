@@ -163,9 +163,17 @@ class TestChainVerification(unittest.TestCase):
         self.assertFalse(status.ok)
         self.assertIn("empty", status.reason)
 
-    def test_missing_file(self) -> None:
-        with self.assertRaises(EvidenceError):
-            verify_chain(self.path.parent / "nope.jsonl")
+    def test_missing_file_is_a_verdict_not_an_exception(self) -> None:
+        # ``verify_chain`` is total on purpose: it answers "is this log trustworthy?"
+        # and "there is no log here" is a legitimate answer, not a crash. The CLI used
+        # to reach this through an exception, which printed a traceback for what is
+        # really a typo in a path; now it prints a FAIL line and still exits 3.
+        # ``read_records`` keeps raising, because a caller asking for records genuinely
+        # cannot continue - only the verdict wrapper swallows it.
+        status = verify_chain(self.path.parent / "nope.jsonl")
+        self.assertFalse(status.ok)
+        self.assertIsInstance(status.reason, str)
+        self.assertTrue(status.reason)
 
     def test_malformed_line_reports_a_line_number(self) -> None:
         self.path.write_text("{not json}\n", encoding="utf-8")

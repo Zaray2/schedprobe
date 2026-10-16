@@ -40,14 +40,21 @@ _HASH_PREFIX = "sha256:"
 
 
 def canonical_json(payload: Mapping[str, Any]) -> str:
-    """Serialize a mapping to canonical JSON (sorted keys, no spaces, ASCII safe).
+    """Serialize a mapping to canonical JSON (sorted keys, no spaces, UTF-8 text).
 
     Used both for hashing evidence records and for writing them, so the bytes on
     disk are exactly the bytes that were hashed. If these ever diverged, the
     evidence chain would be unverifiable - which is why the writer never uses a
     second serializer.
+
+    ``ensure_ascii`` is **False** so that a note written as ``--notes "已授权"`` stays
+    readable in the audit log instead of turning into ``\\u5df2\\u6388\\u6743``. This is
+    byte-safe: every reader and writer opens the log as UTF-8, and ``sha256_hex``
+    encodes the same string as UTF-8, so the digest is still taken over exactly the
+    bytes that were written. Escaping to ASCII would also be deterministic - it simply
+    makes the artifact unreadable to the people most likely to need it.
     """
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def sha256_hex(data: str | bytes) -> str:
