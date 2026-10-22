@@ -1,0 +1,152 @@
+{
+  "environment": {
+    "budget": "10000 executions per campaign",
+    "cjson_sha256": "7fa616e3046edfa7a28a32d5f9eacfd23f92900fe1f8ccd988c1662f30454562",
+    "coverage": "clang SanitizerCoverage (fuzzer-no-link)",
+    "fuzzing_os": "Alpine Linux (WSL2)",
+    "host_os": "Windows",
+    "mutation": "constant havoc set across all loop policies",
+    "sanitizer": "ASAN",
+    "target": "cJSON v1.7.19"
+  },
+  "execs": 10000,
+  "info": {
+    "cjson_sha256": "7fa616e3046edfa7a28a32d5f9eacfd23f92900fe1f8ccd988c1662f30454562",
+    "compiler": "BUILD_OK"
+  },
+  "rows": [
+    {
+      "budget_s": 3600.0,
+      "corpus_size": 46,
+      "counter_count": 1408,
+      "crashes": 0,
+      "edges_found": 239,
+      "execs": 10000,
+      "execs_per_s": 169.0,
+      "max_execs": 10000,
+      "policy": "fifo",
+      "seed": 1337,
+      "wall_s": 59.4
+    },
+    {
+      "budget_s": 3600.0,
+      "corpus_size": 62,
+      "counter_count": 1408,
+      "crashes": 0,
+      "edges_found": 282,
+      "execs": 10000,
+      "execs_per_s": 169.8,
+      "max_execs": 10000,
+      "policy": "rr",
+      "seed": 1337,
+      "wall_s": 59.1
+    },
+    {
+      "budget_s": 3600.0,
+      "corpus_size": 47,
+      "counter_count": 1408,
+      "crashes": 0,
+      "edges_found": 237,
+      "execs": 10000,
+      "execs_per_s": 169.4,
+      "max_execs": 10000,
+      "policy": "static",
+      "seed": 1337,
+      "wall_s": 59.3
+    },
+    {
+      "budget_s": 3600.0,
+      "corpus_size": 58,
+      "counter_count": 1408,
+      "crashes": 0,
+      "edges_found": 274,
+      "execs": 10000,
+      "execs_per_s": 168.2,
+      "max_execs": 10000,
+      "policy": "feedback",
+      "seed": 1337,
+      "wall_s": 59.7
+    },
+    {
+      "budget_s": 3600.0,
+      "corpus_size": 55,
+      "counter_count": 1408,
+      "crashes": 0,
+      "edges_found": 276,
+      "execs": 10000,
+      "execs_per_s": 163.2,
+      "max_execs": 10000,
+      "policy": "full",
+      "seed": 1337,
+      "wall_s": 61.5
+    },
+    {
+      "artifact_dir": "/tmp/schedprobe-loop/out/libfuzzer-1337-crashes",
+      "corpus_size": null,
+      "crashes": 1,
+      "edges_found": 117,
+      "execs": 10000,
+      "policy": "libfuzzer",
+      "seed": 1337
+    }
+  ],
+  "seeds": [
+    1337
+  ],
+  "summary": [
+    {
+      "crashes_total": 1,
+      "edges_max": 117,
+      "edges_mean": 117.0,
+      "edges_min": 117,
+      "edges_spread": 0,
+      "policy": "libfuzzer",
+      "runs": 1
+    },
+    {
+      "crashes_total": 0,
+      "edges_max": 239,
+      "edges_mean": 239.0,
+      "edges_min": 239,
+      "edges_spread": 0,
+      "policy": "fifo",
+      "runs": 1
+    },
+    {
+      "crashes_total": 0,
+      "edges_max": 282,
+      "edges_mean": 282.0,
+      "edges_min": 282,
+      "edges_spread": 0,
+      "policy": "rr",
+      "runs": 1
+    },
+    {
+      "crashes_total": 0,
+      "edges_max": 237,
+      "edges_mean": 237.0,
+      "edges_min": 237,
+      "edges_spread": 0,
+      "policy": "static",
+      "runs": 1
+    },
+    {
+      "crashes_total": 0,
+      "edges_max": 274,
+      "edges_mean": 274.0,
+      "edges_min": 274,
+      "edges_spread": 0,
+      "policy": "feedback",
+      "runs": 1
+    },
+    {
+      "crashes_total": 0,
+      "edges_max": 276,
+      "edges_mean": 276.0,
+      "edges_min": 276,
+      "edges_spread": 0,
+      "policy": "full",
+      "runs": 1
+    }
+  ]
+}
