@@ -320,7 +320,46 @@
     `--base-timeout/--min-timeout/--max-timeout` 的建议值（p95 的 3 倍，上限 4 倍）。
 15. **日志净化只允许 ASCII** — 现象：第一版 `sanitize()` 只放行 ASCII，在 zh-CN 主机上把每个非拉丁标签
     静默变成 `?`。现状：允许 Unicode 认定的可打印字符，按 `unicodedata.category` 丢弃
-    `Cc/Cf/Cs/Co/Cn/Zl/Zp`（涵盖 `\r`、`\n`、`\x1b` 等可劫持终端的字符），并限制长度。
+    `Cc/Cf/Cs/Co/Cn/Zl/Zp`（涵盖 `\r`、`\
+### 新增：FuzzLab（fuzzing 调度研究）
+
+在 `src/schedprobe/fuzzlab/` 下新增一个研究子包，研究问题是：
+**在相同目标、语料、预算与引擎下，用静态分析线索与队列反馈辅助"下一个 fuzz 哪个种子"的决策，
+能否比引擎默认调度发现更多独特缺陷与覆盖率？**
+
+- `fuzzlab/hooks/sched_hook.c`：AFL++ `afl_custom_queue_get` 插件，实现概率准入调度。
+  两种信号可独立开关：静态结构特征（结构密度/字节多样性/嵌套深度/控制字符）与
+  队列反馈（创建序号=探索深度、访问次数=防饥饿）。决策只由 `(文件名, 访问次数, fuzzer 种子)`
+  决定，无时间/pid/地址，因此可复现。
+- `targets/cjson_harness.c`：三条解析路径（`ParseWithLength` / `ParseWithOpts` / 往返打印）。
+- `fuzzlab/{arms,stats,dedup,model,report,runner}.py`：实验臂定义、`fuzzer_stats` 解析、
+  按**故障点**去重（而不是按崩溃文件数）、硬预算账本、报告渲染、WSL 编排。
+- `scripts/fuzzlab_run.py`：`build` / `pilot` / `run` 三个子命令。
+- **复用 SchedProbe 的哈希链证据日志**记录每次 campaign，使每个报告数字可追溯到产生它的运行。
+
+### 修复（研究过程中的真实缺陷，都会导致假结论）
+
+- **系统 cJSON 包没有插桩，fuzzer 是瞎的。** 第一版链接 Alpine 的 `libcjson.so`，
+  只有驱动的 30 行被插桩：AFL++ 报 `No new instrumentation output`、
+  `Bitmap range : 5 to 5 bits`，所有种子在 fuzzer 眼里完全一样。
+  在这样的状态下比较调度策略，无论结果如何都是噪声。现在从源码编译并用
+  `total_edges >= 200` 在构建阶段自检，不及格直接构建失败。
+- **插件创建序号从 fuzzer 种子初始化**，使 `novelty` 恒 >1 并被裁剪成常数 1.0，
+  反馈特征退化为常量——策略看起来在运行，实际等于"准入一切"。
+- **`afl_custom_queue_get` 在某一轮全拒会让 fuzzer 提前退出**（观察到一次 30 秒预算只跑 43 次执行）。
+  改为概率准入，并把提前退出作为指标记录。
+- **未设显式执行超时会让 campaign 超过自己的预算**（观察到 `-V 120` 跑到第 18 分钟仍在运行）。
+  现在 `-t 1000 -m none` 加外层 `timeout -s KILL`。
+- **失败时销毁现场**：早期版本无论成败都删除 WSL 工作目录，把解释失败的日志一起删了。
+  现在只有成功才清理。
+
+### 新增测试
+
+- `tests/test_fuzzlab.py`（37 项）：`fuzzer_stats` 解析（含 `%` 字段与损坏值）、
+  崩溃签名与去重（同一故障不同行号必须同签名，未知输出不得塌缩成一个签名）、
+  预算硬上限、五个实验臂的消融性质、聚合离散度、报告渲染（差异小于离散度必须标注为不可判定）。
+
+n`、`\x1b` 等可劫持终端的字符），并限制长度。
 16. **段健康度公式被基准证伪后重写** — 现象：旧公式
     `confidence_ema * sqrt(1 + productive) - timeout_penalty * waste_ratio` 被基准证明是**有害的**
     ——它把「被过滤段里少数健康主机」推到了队首。现状：当前公式（`models.SegmentState.health_score`）

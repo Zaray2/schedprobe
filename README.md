@@ -171,6 +171,19 @@ CI 徽章：见仓库页面的 Actions 标签。README 顶部不放徽章是因�
 
 ---
 
+## FuzzLab：fuzzing 调度研究
+
+`docs/research/fuzzlab.md` 记录了一项受控实验：在 **AFL++ 4.40c** 之上，用静态分析与队列
+反馈决定"下一个 fuzz 哪个种子"，能否比引擎默认调度发现更多覆盖率与独特缺陷。
+
+**结论是一个否定结果，而且原因是被测量出来的**：所用的 `afl_custom_queue_get` 钩子在一场
+90 秒、上万次执行的 campaign 里只被调用 1–2 次，不足以承载逐种子调度；第一版插件甚至因为
+缺少 `afl_custom_fuzz` 符号而**完全没生效**（AFL++ 只在日志里打了一行警告）。文档完整记录了
+这些缺陷、修法、真实数据（`docs/research/fuzzlab-data/`）、以及为什么核心假设**未能被检验**。
+
+代码在 `src/schedprobe/fuzzlab/` 与 `fuzzlab/hooks/sched_hook.c`，37 项测试在
+`tests/test_fuzzlab.py`，命令见 `scripts/fuzzlab_run.py`。
+
 ## 文档
 
 | 文件 | 内容 |

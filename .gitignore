@@ -64,3 +64,9 @@ pip-install-*/
 pip-uninstall-*/
 .venv-test/
 
+# FuzzLab experiments run in WSL under /tmp, so nothing lands here by accident. The result
+# data under docs/research/fuzzlab-data/ IS committed on purpose: it is the raw evidence
+# behind the research document, and a report whose data is not in the repository is a claim,
+# not a result.
+fuzzlab/.work/
+fuzzlab/bin/

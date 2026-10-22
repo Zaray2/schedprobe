@@ -1,0 +1,156 @@
+{
+  "baseline": "stock",
+  "budget": {
+    "kind": "seconds",
+    "limit": 40
+  },
+  "campaigns": [
+    {
+      "arm": "stock",
+      "budget_exhausted": true,
+      "crash_signatures": [],
+      "crashes_total": 0,
+      "mechanism": "stock",
+      "seed": 1337,
+      "stats": {
+        "arm": "stock",
+        "corpus_count": 85,
+        "coverage_percent": 18.86,
+        "cycles_done": 0,
+        "edges_found": 207,
+        "execs_done": 3882,
+        "execs_per_sec": 96.86,
+        "runtime_s": 40,
+        "saved_crashes": 0,
+        "saved_hangs": 0,
+        "seed": 1337,
+        "total_edges": 1097
+      },
+      "unique_crashes": 0
+    },
+    {
+      "arm": "all",
+      "budget_exhausted": true,
+      "crash_signatures": [],
+      "crashes_total": 0,
+      "mechanism": "all",
+      "seed": 1337,
+      "stats": {
+        "arm": "all",
+        "corpus_count": 104,
+        "coverage_percent": 20.52,
+        "cycles_done": 0,
+        "edges_found": 225,
+        "execs_done": 3961,
+        "execs_per_sec": 98.96,
+        "runtime_s": 40,
+        "saved_crashes": 0,
+        "saved_hangs": 0,
+        "seed": 1337,
+        "total_edges": 1097
+      },
+      "unique_crashes": 0
+    },
+    {
+      "arm": "full",
+      "budget_exhausted": true,
+      "crash_signatures": [],
+      "crashes_total": 0,
+      "mechanism": "full",
+      "seed": 1337,
+      "stats": {
+        "arm": "full",
+        "corpus_count": 108,
+        "coverage_percent": 21.88,
+        "cycles_done": 0,
+        "edges_found": 240,
+        "execs_done": 3613,
+        "execs_per_sec": 90.26,
+        "runtime_s": 40,
+        "saved_crashes": 0,
+        "saved_hangs": 0,
+        "seed": 1337,
+        "total_edges": 1097
+      },
+      "unique_crashes": 0
+    }
+  ],
+  "environment": {
+    "corpus_digest": "004061651669fa8d60b4a95c172205b7afc0d8498803aae0eee6e9349618106b",
+    "fuzzing_os": "Alpine Linux (WSL2)",
+    "host_os": "Windows",
+    "host_python": "10.0.26200",
+    "power_schedule": "AFL++ default (-p explore)",
+    "sanitizer": "ASAN (-fsanitize=address via AFL_USE_ASAN=1)",
+    "toolchain": [
+      "Alpine clang version 22.1.3",
+      "",
+      "x86_64"
+    ]
+  },
+  "mechanisms": [],
+  "name": "fuzzlab-pilot",
+  "seeds": [
+    1337
+  ],
+  "summaries": [
+    {
+      "arm": "stock",
+      "coverage_mean": 18.86,
+      "crashes_total": 0,
+      "edges_max": 207,
+      "edges_mean": 207.0,
+      "edges_min": 207,
+      "edges_spread": 0,
+      "execs_max": 3882,
+      "execs_mean": 3882.0,
+      "execs_min": 3882,
+      "role": "Baseline B: AFL++ exactly as shipped, no plugin. This is the engine's own scheduling, which is what a practitioner would get with no extra work.",
+      "runs": 1,
+      "seeds": [
+        1337
+      ],
+      "unique_crashes": 0,
+      "unique_signatures": []
+    },
+    {
+      "arm": "all",
+      "coverage_mean": 20.52,
+      "crashes_total": 0,
+      "edges_max": 225,
+      "edges_mean": 225.0,
+      "edges_min": 225,
+      "edges_spread": 0,
+      "execs_max": 3961,
+      "execs_mean": 3961.0,
+      "execs_min": 3961,
+      "role": "Baseline A: the plugin loaded but admitting every entry. Same code path as the experiment arm, so a difference between this and stock would be harness overhead rather than scheduling.",
+      "runs": 1,
+      "seeds": [
+        1337
+      ],
+      "unique_crashes": 0,
+      "unique_signatures": []
+    },
+    {
+      "arm": "full",
+      "coverage_mean": 21.88,
+      "crashes_total": 0,
+      "edges_max": 240,
+      "edges_mean": 240.0,
+      "edges_min": 240,
+      "edges_spread": 0,
+      "execs_max": 3613,
+      "execs_mean": 3613.0,
+      "execs_min": 3613,
+      "role": "Experiment C: static analysis combined with queue feedback.",
+      "runs": 1,
+      "seeds": [
+        1337
+      ],
+      "unique_crashes": 0,
+      "unique_signatures": []
+    }
+  ],
+  "target": "cjson-1.7.19"
+}

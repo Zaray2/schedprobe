@@ -1,0 +1,116 @@
+{
+  "arms": {
+    "all": {
+      "crashes_total": 0,
+      "edges_by_seed": {
+        "1337": 238,
+        "1338": 216,
+        "1339": 208
+      },
+      "edges_max": 238,
+      "edges_mean": 220.67,
+      "edges_min": 208,
+      "edges_spread": 30,
+      "execs_max": 11150,
+      "execs_mean": 10673.0,
+      "execs_min": 10302,
+      "runs": 3,
+      "seeds": [
+        "1337",
+        "1338",
+        "1339"
+      ]
+    },
+    "full": {
+      "crashes_total": 0,
+      "edges_by_seed": {
+        "1337": 240
+      },
+      "edges_max": 240,
+      "edges_mean": 240.0,
+      "edges_min": 240,
+      "edges_spread": 0,
+      "execs_max": 3613,
+      "execs_mean": 3613.0,
+      "execs_min": 3613,
+      "runs": 1,
+      "seeds": [
+        "1337"
+      ]
+    },
+    "static": {
+      "crashes_total": 0,
+      "edges_by_seed": {
+        "1338": 258
+      },
+      "edges_max": 258,
+      "edges_mean": 258.0,
+      "edges_min": 258,
+      "edges_spread": 0,
+      "execs_max": 10361,
+      "execs_mean": 10361.0,
+      "execs_min": 10361,
+      "runs": 1,
+      "seeds": [
+        "1338"
+      ]
+    },
+    "stock": {
+      "crashes_total": 0,
+      "edges_by_seed": {
+        "1337": 208,
+        "1338": 236,
+        "1339": 211
+      },
+      "edges_max": 236,
+      "edges_mean": 218.33,
+      "edges_min": 208,
+      "edges_spread": 28,
+      "execs_max": 10995,
+      "execs_mean": 10232.3,
+      "execs_min": 9448,
+      "runs": 3,
+      "seeds": [
+        "1337",
+        "1338",
+        "1339"
+      ]
+    }
+  },
+  "budget_note": "90 seconds wall clock per campaign, 3 seeds, AFL++ -p explore",
+  "campaigns_that_did_not_complete": {
+    "static-1337": {
+      "execs_done": 43
+    },
+    "static-1339": {
+      "execs_done": 43
+    }
+  },
+  "comparison": [
+    {
+      "arm": "all",
+      "delta_edges_vs_stock": 2.34,
+      "spread": 30,
+      "verdict": "inside seed spread"
+    },
+    {
+      "arm": "full",
+      "delta_edges_vs_stock": 21.67,
+      "spread": 28,
+      "verdict": "n=1: cannot judge"
+    },
+    {
+      "arm": "static",
+      "delta_edges_vs_stock": 39.67,
+      "spread": 28,
+      "verdict": "n=1: cannot judge"
+    },
+    {
+      "arm": "stock",
+      "delta_edges_vs_stock": 0.0,
+      "spread": 28,
+      "verdict": "baseline"
+    }
+  ],
+  "completion_threshold_execs": 500
+}
